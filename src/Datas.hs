@@ -86,55 +86,6 @@ instance FromJSON ImageData where
         case eImage of
             Left imageRegular    -> return $ ImageData imageRegular
             Right imageDuplicate -> return $ ImageDuplicateData imageDuplicate
-        -- duplicate_of <- o .:? "duplicate_of"
-        -- case duplicate_of of
-        --     Just x  -> do
-                -- id            <- o .: "id"
-                -- created_at    <- o .: "created_at"
-                -- updated_at    <- o .: "updated_at"
-                -- first_seen_at <- o .: "first_seen_at"
-                -- uploader      <- o .: "uploader_id"
-                -- return $ ImageDuplicateData DuplicateData {
-                --     duplicate_image_id      = id,
-                --     duplicate_created_at    = parseJSONTime created_at,
-                --     duplicate_updated_at    = parseJSONTime updated_at,
-                --     duplicate_first_seen_at = parseJSONTime first_seen_at,
-                --     duplicate_of_id         = x,
-                --     duplicate_uploader_id   = uploader
-                -- }
-        --     Nothing -> do
-                -- id            <- o .: "id"
-                -- upvotes       <- o .: "upvotes"
-                -- downvotes     <- o .: "downvotes"
-                -- faves         <- o .: "faves"
-                -- score         <- o .: "score"
-                -- height        <- o .: "height"
-                -- width         <- o .: "width"
-                -- aspect_ratio  <- o .: "aspect_ratio"
-                -- description   <- o .: "description"
-                -- created_at    <- o .: "created_at"
-                -- updated_at    <- o .: "updated_at"
-                -- first_seen_at <- o .: "first_seen_at"
-                -- tags          <- o .: "tag_ids"
-                -- uploader      <- o .: "uploader_id"
-                -- comment_count <- o .: "comment_count"
-                -- return $ ImageData Data {
-                --     image_id            = id,
-                --     image_upvotes       = upvotes,
-                --     image_downvotes     = downvotes,
-                --     image_faves         = faves,
-                --     image_score         = score,
-                --     image_height        = height,
-                --     image_width         = width,
-                --     image_aspect_ratio  = aspect_ratio,
-                --     image_description   = description,
-                --     image_created_at    = parseJSONTime created_at,
-                --     image_updated_at    = parseJSONTime updated_at,
-                --     image_first_seen_at = parseJSONTime first_seen_at,
-                --     image_tags          = tags,
-                --     image_uploader      = uploader,
-                --     image_comment_count = comment_count
-                -- }
 
 instance FromJSON DuplicateData where
     parseJSON = withObject "duplicatedata" $ \o -> do
@@ -226,9 +177,9 @@ getImage :: ImageId -> IO Image
 getImage i = do
     imageData <- getImageData i
     comments  <- case imageData of
-                    (ImageData d)                   -> getImageComments i (image_comment_count d)
-                    (ImageDuplicateData _) -> return []
-                    ImageNullData                        -> return []
+                    ImageData d          -> getImageComments i (image_comment_count d)
+                    ImageDuplicateData _ -> return []
+                    ImageNullData        -> return []
     return $ Image imageData comments
 
 getImageData :: ImageId -> IO ImageData

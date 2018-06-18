@@ -30,6 +30,7 @@ dependencies:
 - aeson             >= 1.4.0.0
 - text              >= 1.2.2.2
 - http-conduit      >= 2.0.0.3
+- attoparsec        >= 0.13.2.2
 
 library:
   source-dirs: src
