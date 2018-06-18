@@ -99,3 +99,11 @@ instance FromJSON Image where
             image_uploader      = uploader,
             image_comments      = comments
         }
+
+getImageComments :: Int -> Int -> [Comment]
+getImageComments i c =
+    flatten $ map (getCommentPage i) [1..(p+1)]
+    where (p, _) = divMod c 50
+
+getCommentPage :: Int -> Int -> [Comment]
+getCommentPage i p = undefined
