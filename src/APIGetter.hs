@@ -1,37 +1,69 @@
 module APIGetter where
 
-import Types
+import Datas
 import Network.HTTP.Conduit
-import Data.ByteString.Lazy
+import Network.URI.Encode (encode)
+import Data.ByteString.Lazy (ByteString)
+import Data.Yaml (decodeFileEither, ParseException)
+import Data.Either as E
 
-imageAPI :: ImageId -> String
-imageAPI i = "https://derpibooru.org/images/" ++ (show i) ++ ".json"
+getAPIKey :: IO APIKey
+getAPIKey = do
+    creds <- decodeFileEither "./secrets.yaml" :: IO (E.Either ParseException [APIKey])
+    return . head $ either (error . show) id creds
 
-commentsAPI :: ImageId -> PageNo -> String
-commentsAPI i p = "https://derpibooru.org/images/" ++ (show i) ++ "/comments.json?page=" ++ (show p)
+extractKey :: APIKey -> String
+extractKey = (\(APIKey s) -> s) 
 
-tagsAPI :: PageNo -> String
-tagsAPI p = "https://derpibooru.org/tags.json?page=" ++ (show p)
+baseUrl :: String
+baseUrl = "https://derpibooru.org"
 
-userAPI :: UserId -> String
-userAPI i = "https://derpibooru.org/profiles/" ++ (show i) ++ ".json"
+imageAPI :: (Print a) => a -> IO String
+imageAPI i = do
+    key <- getAPIKey
+    return $ baseUrl ++ "/images/" ++ (toString i) ++ ".json?key=" ++ (toString . extractKey $ key)
 
-getUserJSON :: UserId -> IO ByteString
-getUserJSON i =
+commentsAPI :: (Print a, Print b) => a -> b -> IO String
+commentsAPI i p = do
+    key <- getAPIKey
+    return $ baseUrl ++ "/images/" ++ (toString i) ++ "/comments.json?page=" ++ (toString p) ++ "&key=" ++ (toString . extractKey $ key)
+
+tagsAPI :: (Print a) => a -> IO String
+tagsAPI p = do
+    key <- getAPIKey
+    return $ baseUrl ++ "/tags.json?page=" ++ (toString p) ++ "&key=" ++ (toString . extractKey $ key)
+
+userAPI :: (Print a) => a -> IO String
+userAPI i = do
+    key <- getAPIKey
+    return $ baseUrl ++ "/profiles/" ++ (toString i) ++ ".json?key=" ++ (toString . extractKey $ key)
+
+searchAPI :: (Print a) => String -> a -> IO String
+searchAPI q p = do
+    key <- getAPIKey
+    return $ baseUrl ++ "/search/index.json?perpage=50&page=" ++ (toString p) ++ "&q=" ++ (encode q) ++ "&key=" ++ (toString . extractKey $ key)
+
+getUserJSON :: (Print a) => a -> IO ByteString
+getUserJSON i = do
+    url <- userAPI i
     simpleHttp url
-    where url = userAPI i
 
-getImageJSON :: ImageId -> IO ByteString
-getImageJSON i =
+getImageJSON :: (Print a) => a -> IO ByteString
+getImageJSON i = do
+    url <- imageAPI i
     simpleHttp url
-    where url = imageAPI i
 
-getTagsJSON :: PageNo -> IO ByteString
-getTagsJSON p =
+getTagsJSON :: (Print a) => a -> IO ByteString
+getTagsJSON p = do
+    url <- tagsAPI p
     simpleHttp url
-    where url = tagsAPI p
 
-getCommentsJSON :: ImageId -> PageNo -> IO ByteString
-getCommentsJSON i p =
+getCommentsJSON :: (Print a, Print b) => a -> b -> IO ByteString
+getCommentsJSON i p = do
+    url <- commentsAPI i p
     simpleHttp url
-    where url = commentsAPI i p
+
+getSearchJSON :: (Print a) => String -> a -> IO ByteString
+getSearchJSON s p = do
+    url <- searchAPI s p
+    simpleHttp url
