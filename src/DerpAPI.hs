@@ -5,6 +5,7 @@ module DerpAPI
         getImageWithComments,
         getUserByName,
         getUser,
+        getUserWithFaves,
         getUserFavorites,
         getUserFavoritesById,
         getUserFavoritesByName,
@@ -52,19 +53,26 @@ getCommentPage i p = do
 getUser :: UserId -> IO User
 getUser i = do
     json <- getUserJSON i
-    return $ decodeNoMaybe json
+    return $ UserWithoutFaves $ decodeNoMaybe json
+
+getUserWithFaves :: UserId -> IO User
+getUserWithFaves i = do
+    json <- getUserJSON i
+    let user_data = decodeNoMaybe json
+    faves <- getUserFavorites $ user_name user_data
+    return $ UserWithFaves user_data faves
 
 getUserByName :: Username -> IO User
 getUserByName s = do
     json <- getUserJSON $ encode s
-    return $ decodeNoMaybe json
+    return $ UserWithoutFaves $ decodeNoMaybe json
 
 getUserFavoritesById :: UserId -> IO [ImageId]
 getUserFavoritesById i = do
     user <- getUser i
     case user of
-        User{}   -> getUserFavorites $ user_name user
-        _        -> return []
+        (UserWithFaves _ f)    -> return f
+        (UserWithoutFaves d)   -> getUserFavorites $ user_name d
 
 getUserFavoritesByName :: Username -> IO [ImageId]
 getUserFavoritesByName u = getUserFavorites u

@@ -1,6 +1,8 @@
 module Main where
 
-import Lib
+import DerpAPI
 
 main :: IO ()
-main = someFunc
+main = do
+    user <- getUserWithFaves 216871
+    print user

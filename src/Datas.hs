@@ -26,6 +26,7 @@ data CommentPage       = CommentPage [Comment] | NullCommentPage deriving (Show)
 data SearchPage        = SearchPage Int [ImageData] | NullSearchPage deriving (Show)
 data ImageWithComments = ImageWithComments ImageData [Comment] deriving (Show)
 data ImageData         = ImageData Data | ImageDuplicateData DuplicateData | ImageNullData deriving (Show)
+data User              = UserWithFaves UserData [ImageId] | UserWithoutFaves UserData deriving (Show)
 
 data Data = Data {
     image_id            :: ImageId   ,
@@ -73,7 +74,7 @@ data Comment = Comment {
     comment_deleted   :: Bool
 } | NullComment deriving (Show)
 
-data User = User {
+data UserData = UserData {
     user_id            :: UserId ,
     user_role          :: String ,
     user_created_at    :: UTCTime,
@@ -82,7 +83,7 @@ data User = User {
     user_awards        :: [Award],
     user_name          :: String ,
     user_description   :: Maybe String
-} | AnonymousUser | NullUser deriving (Show)
+} | AnonymousUserData | NullUserData deriving (Show)
 
 data Award = Award {
     award_id    :: AwardId,
@@ -152,8 +153,8 @@ instance FromJSON Data where
 instance FromJSON SearchPage where
     parseJSON (Object o) =
         SearchPage
-            <$> o .: "search"
-            <*> o .: "total"
+            <$> o .: "total"
+            <*> o .: "search"
     parseJSON _          = fail "Unable to parse non-Object"
 
 instance FromJSON CommentPage where
@@ -172,9 +173,9 @@ instance FromJSON Comment where
             <*> o .: "deleted"
     parseJSON _          = fail "Unable to parse non-Object"
 
-instance FromJSON User where
+instance FromJSON UserData where
     parseJSON (Object o) =
-        User
+        UserData
             <$> o .:  "id"
             <*> o .:  "role"
             <*> o .:  "created_at"
@@ -228,8 +229,8 @@ instance Nullable CommentPage where
     null = NullCommentPage
 instance Nullable SearchPage where
     null = NullSearchPage
-instance Nullable User where
-    null = NullUser
+instance Nullable UserData where
+    null = NullUserData
 instance Nullable Award where
     null = NullAward
 instance Nullable Tag where
