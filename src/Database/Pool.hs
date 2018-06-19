@@ -4,7 +4,8 @@ module Database.Pool where
 import Control.Concurrent
 import Data.Pool
 import Database.PostgreSQL.Simple
-import Squares.Database
+import Config
+import Datas
 
 import qualified Data.Map as M
 
@@ -14,19 +15,14 @@ createPool' rs dbname = do
     p <- createPool (connect $ info {connectDatabase = dbname}) close 5 10 5
     return p
 
-data ServerResources = ServerResources
-    { serverPools :: MVar (M.Map String (Pool Connection))
-    , serverPoolLock :: MVar () -- write lock
-    }
-
 defaultResources :: IO ServerResources
 defaultResources = do
     ps <- newMVar (M.empty)
     lock <- newEmptyMVar
-    return $ ServerResources
-        { serverPools = ps
-        , serverPoolLock = lock
-        }
+    return $ ServerResources {
+        serverPools    = ps,
+        serverPoolLock = lock
+    }
 
 
 

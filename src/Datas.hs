@@ -1,6 +1,10 @@
 {-# LANGUAGE FlexibleInstances, UndecidableInstances, OverloadedStrings #-}
 module Datas where
 
+import Control.Concurrent
+import qualified Data.Map as M
+import Database.PostgreSQL.Simple
+import Data.Pool
 import Data.Aeson
 import Data.Time.Clock
 import Data.Attoparsec.ByteString
@@ -91,6 +95,11 @@ data DatabaseCredentials = DatabaseCredentials {
     db_user     :: String,
     db_password :: String
 } deriving (Show)
+
+data ServerResources = ServerResources {
+    serverPools    :: MVar (M.Map String (Pool Connection)),
+    serverPoolLock :: MVar () -- write lock
+}
 
 -- Classes
 
