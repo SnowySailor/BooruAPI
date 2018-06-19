@@ -87,6 +87,11 @@ data Award = Award {
     award_date  :: UTCTime
 } | NullAward deriving (Show)
 
+data DatabaseCredentials = DatabaseCredentials {
+    db_user     :: String,
+    db_password :: String
+} deriving (Show)
+
 -- Classes
 
 class Nullable a where
@@ -198,6 +203,12 @@ instance FromJSON Settings where
             <$> v .:  "key"
             <*> v .:? "images_per_page" .!= 50
             <*> v .:? "comments_per_page" .!= 20
+    parseJSON _          = fail "Unable to parse non-Object"
+
+instance FromJSON DatabaseCredentials where
+    parseJSON (Object v) = 
+        DatabaseCredentials <$> (v .: "user")
+                            <*> (v .: "password")
     parseJSON _          = fail "Unable to parse non-Object"
 
 instance Nullable ImageData where

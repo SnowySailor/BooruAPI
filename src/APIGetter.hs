@@ -1,16 +1,10 @@
 module APIGetter where
 
 import Datas
+import Config
 import Network.HTTP.Conduit
 import Network.URI.Encode (encode)
 import Data.ByteString.Lazy (ByteString)
-import Data.Yaml (decodeFileEither, ParseException)
-import Data.Either as E
-
-getSettings :: IO Settings
-getSettings = do
-    creds <- decodeFileEither "./secrets.yaml" :: IO (E.Either ParseException [Settings])
-    return . head $ either (error . show) id creds
 
 getKey :: Settings -> String
 getKey = (\(Settings s _ _) -> s)

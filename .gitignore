@@ -1,4 +1,5 @@
 secrets.yaml
+database.yaml
 *.hi
 *.o
 *.swp
