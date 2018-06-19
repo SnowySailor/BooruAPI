@@ -34,9 +34,10 @@ getImageWithComments i = do
 
 getImageComments :: ImageId -> Int -> IO [Comment]
 getImageComments i count = do
+    sett <- getSettings
+    let (p, _) = divMod count $ getCommentsPerPage sett
     comments <- mapM (getCommentPage i) [1..(p+1)]
     return $ flatten $ map (\(CommentPage c) -> c) comments
-    where (p, _) = divMod count 50
 
 -- Comments
 

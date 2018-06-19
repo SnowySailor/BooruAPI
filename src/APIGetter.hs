@@ -13,10 +13,13 @@ getSettings = do
     return . head $ either (error . show) id creds
 
 getKey :: Settings -> String
-getKey = (\(Settings s _) -> s)
+getKey = (\(Settings s _ _) -> s)
 
 getImagesPerPage :: Settings -> Int
-getImagesPerPage = (\(Settings _ i) -> i)
+getImagesPerPage = (\(Settings _ i _) -> i)
+
+getCommentsPerPage :: Settings -> Int
+getCommentsPerPage = (\(Settings _ _ i) -> i)
 
 baseUrl :: String
 baseUrl = "https://derpibooru.org"

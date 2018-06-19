@@ -17,7 +17,7 @@ type Username  = String
 
 -- Datas
 
-data Settings          = Settings String Int deriving (Show)
+data Settings          = Settings String Int Int deriving (Show)
 data CommentPage       = CommentPage [Comment] | NullCommentPage deriving (Show)
 data SearchPage        = SearchPage Int [ImageData] | NullSearchPage deriving (Show)
 data ImageWithComments = ImageWithComments ImageData [Comment] deriving (Show)
@@ -195,8 +195,9 @@ instance FromJSON Tag where
 instance FromJSON Settings where
     parseJSON (Object v) = 
         Settings
-            <$> v .: "key"
-            <*> v .: "images_per_page"
+            <$> v .:  "key"
+            <*> v .:? "images_per_page" .!= 50
+            <*> v .:? "comments_per_page" .!= 20
     parseJSON _          = fail "Unable to parse non-Object"
 
 instance Nullable ImageData where
