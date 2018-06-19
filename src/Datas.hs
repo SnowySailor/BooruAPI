@@ -23,12 +23,12 @@ type Username  = String
 
 data Settings          = Settings String Int Int deriving (Show)
 data CommentPage       = CommentPage [Comment] | NullCommentPage deriving (Show)
-data SearchPage        = SearchPage Int [ImageData] | NullSearchPage deriving (Show)
-data ImageWithComments = ImageWithComments ImageData [Comment] deriving (Show)
-data ImageData         = ImageData Data | ImageDuplicateData DuplicateData | ImageNullData deriving (Show)
-data User              = UserWithFaves UserData [ImageId] | UserWithoutFaves UserData deriving (Show)
+data SearchPage        = SearchPage Int [Image] | NullSearchPage deriving (Show)
+data Image             = Image ImageData | ImageDuplicate DuplicateData | NullImage deriving (Show)
+data ImageFull         = ImageFull ImageData [Comment] | ImageDuplicateFull DuplicateData | NullImageFull deriving (Show)
+data User              = UserWithFaves UserData [ImageId] | UserWithoutFaves UserData | AnonymousUser deriving (Show)
 
-data Data = Data {
+data ImageData = ImageData {
     image_id            :: ImageId   ,
     image_upvotes       :: Int       ,
     image_downvotes     :: Int       ,
@@ -44,7 +44,7 @@ data Data = Data {
     image_tags          :: [TagId]   ,
     image_uploader      :: Maybe Int ,
     image_comment_count :: Int
-} deriving (Show)
+} | NullImageData deriving (Show)
 
 data DuplicateData = DuplicateData {
     duplicate_image_id      :: Int      ,
@@ -53,7 +53,7 @@ data DuplicateData = DuplicateData {
     duplicate_first_seen_at :: UTCTime  ,
     duplicate_uploader_id   :: Maybe Int,
     duplicate_of_id         :: Int      
-} deriving (Show)
+} | NullDuplicateData deriving (Show)
 
 data Tag = Tag {
     tag_id                :: TagId  ,
@@ -112,12 +112,12 @@ class (Show a) => Print a where
 
 -- Instances
 
-instance FromJSON ImageData where
+instance FromJSON Image where
     parseJSON o = do
         eImage <- eitherP (parseJSON o) (parseJSON o)
         case eImage of
-            Left imageRegular    -> return $ ImageData imageRegular
-            Right imageDuplicate -> return $ ImageDuplicateData imageDuplicate
+            Left imageRegular    -> return $ Image imageRegular 
+            Right imageDuplicate -> return $ ImageDuplicate imageDuplicate
 
 instance FromJSON DuplicateData where
     parseJSON (Object o) =
@@ -130,9 +130,9 @@ instance FromJSON DuplicateData where
             <*> o .:  "duplicate_of"
     parseJSON _          = fail "Unable to parse non-Object"
 
-instance FromJSON Data where
+instance FromJSON ImageData where
     parseJSON (Object o) =
-        Data
+        ImageData
             <$> o .:  "id"
             <*> o .:  "upvotes"
             <*> o .:  "downvotes"
@@ -221,8 +221,14 @@ instance FromJSON DatabaseCredentials where
                             <*> (v .: "password")
     parseJSON _          = fail "Unable to parse non-Object"
 
+instance Nullable Image where
+    null = NullImage
+instance Nullable ImageFull where
+    null = NullImageFull
 instance Nullable ImageData where
-    null = ImageNullData
+    null = NullImageData
+instance Nullable DuplicateData where
+    null = NullDuplicateData
 instance Nullable Comment where
     null = NullComment
 instance Nullable CommentPage where

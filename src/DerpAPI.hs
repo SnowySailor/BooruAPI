@@ -1,8 +1,8 @@
 module DerpAPI 
     (
         getImage,
+        getImageFull,
         getImageComments,
-        getImageWithComments,
         getUserByName,
         getUser,
         getUserWithFaves,
@@ -21,18 +21,21 @@ import Network.URI.Encode
 
 -- Images
 
-getImage :: ImageId -> IO ImageData
+getImage :: ImageId -> IO Image
 getImage i = do
     imageData <- getImageJSON i
     return $ decodeNoMaybe imageData
 
-getImageWithComments :: ImageId -> IO ImageWithComments
-getImageWithComments i = do
+getImageFull :: ImageId -> IO ImageFull
+getImageFull i = do
     imageData <- getImage i
     comments  <- case imageData of
-        (ImageData d) -> getImageComments (image_id d) (image_comment_count d)
+        (Image d)     -> getImageComments (image_id d) (image_comment_count d)
         _             -> return []
-    return $ ImageWithComments imageData comments
+    return $ case imageData of
+        (Image d)          -> ImageFull d comments
+        (ImageDuplicate d) -> ImageDuplicateFull d
+        (NullImage)        -> NullImageFull
 
 getImageComments :: ImageId -> Int -> IO [Comment]
 getImageComments i count = do
@@ -73,6 +76,7 @@ getUserFavoritesById i = do
     case user of
         (UserWithFaves _ f)    -> return f
         (UserWithoutFaves d)   -> getUserFavorites $ user_name d
+        (AnonymousUser)        -> return []
 
 getUserFavoritesByName :: Username -> IO [ImageId]
 getUserFavoritesByName u = getUserFavorites u

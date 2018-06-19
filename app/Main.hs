@@ -4,5 +4,5 @@ import DerpAPI
 
 main :: IO ()
 main = do
-    user <- getUserWithFaves 216871
+    user <- getImageFull 170
     print user
