@@ -7,7 +7,8 @@ module DerpAPI
         getUser,
         getUserFavorites,
         getUserFavoritesById,
-        getUserFavoritesByName
+        getUserFavoritesByName,
+        getAllTags
     ) where
 
 import Datas
@@ -30,8 +31,6 @@ getImageWithComments i = do
         (ImageData d) -> getImageComments (image_id d) (image_comment_count d)
         _             -> return []
     return $ ImageWithComments imageData comments
-getComments d = do
-    return $ ImageWithComments d []
 
 getImageComments :: ImageId -> Int -> IO [Comment]
 getImageComments i count = do
@@ -62,27 +61,35 @@ getUserFavoritesById :: UserId -> IO [ImageId]
 getUserFavoritesById i = do
     user <- getUser i
     case user of
-        NullUser -> return []
         User{}   -> getUserFavorites $ user_name user
+        _        -> return []
 
 getUserFavoritesByName :: Username -> IO [ImageId]
 getUserFavoritesByName u = getUserFavorites u
 
 getUserFavorites :: Username -> IO [ImageId]
 getUserFavorites u = do
+    sett <- getSettings
     firstPage  <- getSearchPage q 1
     totalCount <- return $ case firstPage of
         NullSearchPage -> 0
         SearchPage c _ -> c
-    let (p, _) = divMod totalCount 20
+    let (p, _) = divMod totalCount $ getImagesPerPage sett
     userFaves  <- mapM (getSearchPage q) [2..(p+1)]
     return $ map getImageId . flatten . map getSearchImages $ firstPage:userFaves
     where q = "faved_by:" ++ u
 
 -- Tags
 
-getAllTags :: IO [Tag]
-getAllTags = undefined
+getAllTags :: PageNo -> IO [Tag]
+getAllTags maxPage = do
+    tags <- mapM getTagPage [1..maxPage]
+    return $ flatten tags
+
+getTagPage :: PageNo -> IO [Tag]
+getTagPage p = do
+    json <- getTagsJSON p
+    return $ decodeNoMaybe json
 
 -- Search
 

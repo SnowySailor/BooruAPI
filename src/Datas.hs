@@ -3,10 +3,7 @@ module Datas where
 
 import Data.Aeson
 import Data.Time.Clock
-import Data.Text.Encoding as T
 import Data.Attoparsec.ByteString
-
-import Helpers
 
 -- Types
 
@@ -20,7 +17,7 @@ type Username  = String
 
 -- Datas
 
-data APIKey            = APIKey String deriving (Show)
+data Settings          = Settings String Int deriving (Show)
 data CommentPage       = CommentPage [Comment] | NullCommentPage deriving (Show)
 data SearchPage        = SearchPage Int [ImageData] | NullSearchPage deriving (Show)
 data ImageWithComments = ImageWithComments ImageData [Comment] deriving (Show)
@@ -161,9 +158,9 @@ instance FromJSON Data where
 
 instance FromJSON SearchPage where
     parseJSON = withObject "searchpage" $ \o -> do
-        search <- o .: "search"
-        count  <- o .: "total"
-        return $ SearchPage count search
+        search       <- o .: "search"
+        total_count  <- o .: "total"
+        return $ SearchPage total_count search
 
 instance FromJSON CommentPage where
     parseJSON = withObject "commentspage" $ \o -> do
@@ -175,14 +172,14 @@ instance FromJSON Comment where
         i         <- o .: "id"
         body      <- o .: "body"
         author    <- o .: "author"
-        image_id  <- o .: "image_id"
+        image     <- o .: "image_id"
         posted_at <- o .: "posted_at"
         deleted   <- o .: "deleted"
         return Comment {
             comment_id        = i,
             comment_body      = body,
             comment_user      = author,
-            comment_image     = image_id,
+            comment_image     = image,
             comment_posted_at = posted_at,
             comment_deleted   = deleted
         }
@@ -240,11 +237,11 @@ instance FromJSON Tag where
             tag_implied_tags      = implied_tags
         }
 
-
-
-instance FromJSON APIKey where
+instance FromJSON Settings where
     parseJSON (Object v) = 
-        APIKey <$> (v .: "key")
+        Settings
+            <$> v .: "key"
+            <*> v .: "images_per_page"
     parseJSON _ = fail "Unable to parse database credentials"
 
 instance Nullable ImageData where

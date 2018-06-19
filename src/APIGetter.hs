@@ -7,41 +7,44 @@ import Data.ByteString.Lazy (ByteString)
 import Data.Yaml (decodeFileEither, ParseException)
 import Data.Either as E
 
-getAPIKey :: IO APIKey
-getAPIKey = do
-    creds <- decodeFileEither "./secrets.yaml" :: IO (E.Either ParseException [APIKey])
+getSettings :: IO Settings
+getSettings = do
+    creds <- decodeFileEither "./secrets.yaml" :: IO (E.Either ParseException [Settings])
     return . head $ either (error . show) id creds
 
-extractKey :: APIKey -> String
-extractKey = (\(APIKey s) -> s) 
+getKey :: Settings -> String
+getKey = (\(Settings s _) -> s)
+
+getImagesPerPage :: Settings -> Int
+getImagesPerPage = (\(Settings _ i) -> i)
 
 baseUrl :: String
 baseUrl = "https://derpibooru.org"
 
 imageAPI :: (Print a) => a -> IO String
 imageAPI i = do
-    key <- getAPIKey
-    return $ baseUrl ++ "/images/" ++ (toString i) ++ ".json?key=" ++ (toString . extractKey $ key)
+    sett <- getSettings
+    return $ baseUrl ++ "/images/" ++ (toString i) ++ ".json?key=" ++ (toString . getKey $ sett)
 
 commentsAPI :: (Print a, Print b) => a -> b -> IO String
 commentsAPI i p = do
-    key <- getAPIKey
-    return $ baseUrl ++ "/images/" ++ (toString i) ++ "/comments.json?page=" ++ (toString p) ++ "&key=" ++ (toString . extractKey $ key)
+    sett <- getSettings
+    return $ baseUrl ++ "/images/" ++ (toString i) ++ "/comments.json?page=" ++ (toString p) ++ "&key=" ++ (toString . getKey $ sett)
 
 tagsAPI :: (Print a) => a -> IO String
 tagsAPI p = do
-    key <- getAPIKey
-    return $ baseUrl ++ "/tags.json?page=" ++ (toString p) ++ "&key=" ++ (toString . extractKey $ key)
+    sett <- getSettings
+    return $ baseUrl ++ "/tags.json?page=" ++ (toString p) ++ "&key=" ++ (toString . getKey $ sett)
 
 userAPI :: (Print a) => a -> IO String
 userAPI i = do
-    key <- getAPIKey
-    return $ baseUrl ++ "/profiles/" ++ (toString i) ++ ".json?key=" ++ (toString . extractKey $ key)
+    sett <- getSettings
+    return $ baseUrl ++ "/profiles/" ++ (toString i) ++ ".json?key=" ++ (toString . getKey $ sett)
 
 searchAPI :: (Print a) => String -> a -> IO String
 searchAPI q p = do
-    key <- getAPIKey
-    return $ baseUrl ++ "/search/index.json?perpage=50&page=" ++ (toString p) ++ "&q=" ++ (encode q) ++ "&key=" ++ (toString . extractKey $ key)
+    sett <- getSettings
+    return $ baseUrl ++ "/search/index.json?perpage=" ++ (toString . getImagesPerPage $ sett) ++ "&page=" ++ (toString p) ++ "&q=" ++ (encode q) ++ "&key=" ++ (toString . getKey $ sett)
 
 getUserJSON :: (Print a) => a -> IO ByteString
 getUserJSON i = do
