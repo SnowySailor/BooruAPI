@@ -1,8 +1,6 @@
 {-# LANGUAGE FlexibleInstances, UndecidableInstances, OverloadedStrings #-}
 module Datas where
 
-import Data.ByteString (ByteString)
-import Data.Dates
 import Data.Aeson
 import Data.Time.Clock
 import Data.Text.Encoding as T
@@ -56,11 +54,13 @@ data DuplicateData = DuplicateData {
 } deriving (Show)
 
 data Tag = Tag {
-    tag_id                :: TagId ,
-    tag_name              :: String,
-    tag_short_desctiption :: String,
-    tag_description       :: String,
-    tag_implied_tags      :: [TagId]
+    tag_id                :: TagId  ,
+    tag_name              :: String ,
+    tag_slug              :: String ,
+    tag_short_desctiption :: String ,
+    tag_description       :: String ,
+    tag_implied_tags      :: [TagId],
+    tag_aliased_to        :: Maybe TagId
 } | NullTag deriving (Show)
 
 data Comment = Comment {
@@ -109,14 +109,14 @@ instance FromJSON ImageData where
 
 instance FromJSON DuplicateData where
     parseJSON = withObject "duplicatedata" $ \o -> do
-        id            <- o .:  "id"
+        i             <- o .:  "id"
         created_at    <- o .:  "created_at"
         updated_at    <- o .:  "updated_at"
         first_seen_at <- o .:  "first_seen_at"
         uploader      <- o .:? "uploader_id"
         duplicate_of  <- o .:  "duplicate_of"
         return DuplicateData {
-            duplicate_image_id      = id,
+            duplicate_image_id      = i,
             duplicate_created_at    = created_at,
             duplicate_updated_at    = updated_at,
             duplicate_first_seen_at = first_seen_at,
@@ -126,7 +126,7 @@ instance FromJSON DuplicateData where
 
 instance FromJSON Data where
     parseJSON = withObject "data" $ \o -> do
-        id            <- o .:  "id"
+        i             <- o .:  "id"
         upvotes       <- o .:  "upvotes"
         downvotes     <- o .:  "downvotes"
         faves         <- o .:  "faves"
@@ -142,7 +142,7 @@ instance FromJSON Data where
         uploader      <- o .:? "uploader_id"
         comment_count <- o .:  "comment_count"
         return Data {
-            image_id            = id,
+            image_id            = i,
             image_upvotes       = upvotes,
             image_downvotes     = downvotes,
             image_faves         = faves,
@@ -172,14 +172,14 @@ instance FromJSON CommentPage where
 
 instance FromJSON Comment where
     parseJSON = withObject "comment" $ \o -> do
-        id        <- o .: "id"
+        i         <- o .: "id"
         body      <- o .: "body"
         author    <- o .: "author"
         image_id  <- o .: "image_id"
         posted_at <- o .: "posted_at"
         deleted   <- o .: "deleted"
         return Comment {
-            comment_id        = id,
+            comment_id        = i,
             comment_body      = body,
             comment_user      = author,
             comment_image     = image_id,
@@ -190,7 +190,7 @@ instance FromJSON Comment where
 instance FromJSON User where
     parseJSON = withObject "user" $ \o -> do
         awards        <- o .:  "awards"
-        id            <- o .:  "id"
+        i             <- o .:  "id"
         name          <- o .:  "name"
         role          <- o .:  "role"
         description   <- o .:? "description"
@@ -198,7 +198,7 @@ instance FromJSON User where
         comment_count <- o .:  "comment_count"
         upload_count  <- o .:  "uploads_count"
         return $ User {
-            user_id            = id,
+            user_id            = i,
             user_name          = name,
             user_description   = description,
             user_role          = role,
@@ -210,16 +210,37 @@ instance FromJSON User where
 
 instance FromJSON Award where
     parseJSON = withObject "award" $ \o -> do
-        id         <- o .: "id"
+        i          <- o .: "id"
         title      <- o .: "title"
         awarded_on <- o .: "awarded_on"
         label      <- o .: "label"
         return $ Award {
-            award_id    = id,
+            award_id    = i,
             award_title = title,
             award_label = label,
             award_date  = awarded_on
         }
+
+instance FromJSON Tag where
+    parseJSON = withObject "tag" $ \o -> do
+        i                 <- o .:  "id"
+        name              <- o .:  "name"
+        slug              <- o .:  "slug"
+        description       <- o .:  "description"
+        short_description <- o .:  "short_description"
+        aliased_to        <- o .:? "aliased_to_id"
+        implied_tags      <- o .:  "implied_tag_ids"
+        return $ Tag {
+            tag_id                = i,
+            tag_name              = name,
+            tag_slug              = slug,
+            tag_description       = description,
+            tag_short_desctiption = short_description,
+            tag_aliased_to        = aliased_to,
+            tag_implied_tags      = implied_tags
+        }
+
+
 
 instance FromJSON APIKey where
     parseJSON (Object v) = 
