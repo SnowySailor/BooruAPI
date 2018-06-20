@@ -26,7 +26,8 @@ data CommentPage       = CommentPage [Comment] | NullCommentPage deriving (Show)
 data SearchPage        = SearchPage Int [Image] | NullSearchPage deriving (Show)
 data Image             = Image ImageData | ImageDuplicate DuplicateData | NullImage deriving (Show)
 data ImageFull         = ImageFull ImageData [Comment] | ImageDuplicateFull DuplicateData | NullImageFull deriving (Show)
-data User              = UserWithFaves UserData [ImageId] | UserWithoutFaves UserData | AnonymousUser deriving (Show)
+data User              = User UserData | AnonymousUser | NullUser deriving (Show)
+data UserFull          = UserFull UserData [ImageId] | NullUserFull deriving (Show)
 
 data ImageData = ImageData {
     image_id            :: ImageId   ,
@@ -118,6 +119,11 @@ instance FromJSON Image where
         case eImage of
             Left imageRegular    -> return $ Image imageRegular 
             Right imageDuplicate -> return $ ImageDuplicate imageDuplicate
+
+instance FromJSON User where
+    parseJSON o = do
+        userD <- parseJSON o
+        return $ User userD
 
 instance FromJSON DuplicateData where
     parseJSON (Object o) =
@@ -241,6 +247,8 @@ instance Nullable Award where
     null = NullAward
 instance Nullable Tag where
     null = NullTag
+instance Nullable User where
+    null = NullUser
 instance (Nullable a) => Nullable [a] where
     null = [Datas.null]
 
