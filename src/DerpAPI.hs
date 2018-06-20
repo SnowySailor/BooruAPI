@@ -30,12 +30,15 @@ getImageFull :: ImageId -> IO ImageFull
 getImageFull i = do
     imageData <- getImage i
     comments  <- case imageData of
-        Image d     -> getImageComments (image_id d) (image_comment_count d)
-        _             -> return []
+        Image NullImageData -> return []
+        Image d             -> getImageComments (image_id d) (image_comment_count d)
+        _                   -> return []
     return $ case imageData of
-        Image d          -> ImageFull d comments
-        ImageDuplicate d -> ImageDuplicateFull d
-        NullImage        -> NullImageFull
+        Image NullImageData              -> ImageFull NullImageData comments
+        Image d                          -> ImageFull d comments
+        ImageDuplicate NullDuplicateData -> ImageDuplicateFull NullDuplicateData
+        ImageDuplicate d                 -> ImageDuplicateFull d
+        NullImage                        -> NullImageFull
 
 getImageComments :: ImageId -> Int -> IO [Comment]
 getImageComments i count = do
@@ -62,7 +65,9 @@ getUserFull :: UserId -> IO UserFull
 getUserFull i = do
     json <- getUserJSON i
     let user_data = decodeNoMaybe json
-    faves <- getUserFavorites $ user_name user_data
+    faves <- case user_data of
+        NullUserData -> return []
+        UserData{}   -> getUserFavorites $ user_name user_data
     return $ UserFull user_data faves
 
 getUserByName :: Username -> IO User
@@ -74,8 +79,9 @@ getUserFavoritesById :: UserId -> IO [ImageId]
 getUserFavoritesById i = do
     user <- getUser i
     case user of
-        User d -> getUserFavorites $ user_name d
-        _      -> return []
+        User NullUserData -> return []
+        User d            -> getUserFavorites $ user_name d
+        _                 -> return []
 
 
 getUserFavoritesByName :: Username -> IO [ImageId]

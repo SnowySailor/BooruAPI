@@ -21,13 +21,13 @@ type Username  = String
 
 -- Datas
 
-data Settings          = Settings String Int Int deriving (Show)
-data CommentPage       = CommentPage [Comment] | NullCommentPage deriving (Show)
-data SearchPage        = SearchPage Int [Image] | NullSearchPage deriving (Show)
-data Image             = Image ImageData | ImageDuplicate DuplicateData | NullImage deriving (Show)
-data ImageFull         = ImageFull ImageData [Comment] | ImageDuplicateFull DuplicateData | NullImageFull deriving (Show)
-data User              = User UserData | AnonymousUser | NullUser deriving (Show)
-data UserFull          = UserFull UserData [ImageId] | AnonymousUserFull | NullUserFull deriving (Show)
+data Settings    = Settings String Int Int deriving (Show)
+data CommentPage = CommentPage [Comment] | NullCommentPage deriving (Show)
+data SearchPage  = SearchPage Int [Image] | NullSearchPage deriving (Show)
+data Image       = Image ImageData | ImageDuplicate DuplicateData | NullImage deriving (Show)
+data ImageFull   = ImageFull ImageData [Comment] | ImageDuplicateFull DuplicateData | NullImageFull deriving (Show)
+data User        = User UserData | AnonymousUser | NullUser deriving (Show)
+data UserFull    = UserFull UserData [ImageId] | AnonymousUserFull | NullUserFull deriving (Show)
 
 data ImageData = ImageData {
     image_id            :: ImageId   ,
@@ -84,7 +84,7 @@ data UserData = UserData {
     user_awards        :: [Award],
     user_name          :: String ,
     user_description   :: Maybe String
-} | AnonymousUserData | NullUserData deriving (Show)
+} | NullUserData deriving (Show)
 
 data Award = Award {
     award_id    :: AwardId,
