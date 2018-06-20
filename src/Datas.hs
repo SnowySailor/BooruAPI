@@ -27,7 +27,7 @@ data SearchPage        = SearchPage Int [Image] | NullSearchPage deriving (Show)
 data Image             = Image ImageData | ImageDuplicate DuplicateData | NullImage deriving (Show)
 data ImageFull         = ImageFull ImageData [Comment] | ImageDuplicateFull DuplicateData | NullImageFull deriving (Show)
 data User              = User UserData | AnonymousUser | NullUser deriving (Show)
-data UserFull          = UserFull UserData [ImageId] | NullUserFull deriving (Show)
+data UserFull          = UserFull UserData [ImageId] | AnonymousUserFull | NullUserFull deriving (Show)
 
 data ImageData = ImageData {
     image_id            :: ImageId   ,
