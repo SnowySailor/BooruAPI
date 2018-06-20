@@ -11,7 +11,7 @@ insertImage :: P.Query
 insertImage = undefined
 
 insertImageTag :: P.Query
-insertImageTag = undefined
+insertImageTag = "insert into image_tag (image_id, tag_id) values (?, ?)"
 
 -- Comments
     -- Comments
@@ -27,11 +27,11 @@ insertComment = undefined
 insertUser :: P.Query
 insertUser = undefined
 
-insertUserAwards :: P.Query
-insertUserAwards = undefined
+insertUserAward :: P.Query
+insertUserAward = undefined
 
-insertUserFavorites :: P.Query
-insertUserFavorites = undefined
+insertUserFavorite :: P.Query
+insertUserFavorite = "insert into user_favorite (user_id, image_id) values (?, ?)"
 
 -- Tags
     -- Tag definitions

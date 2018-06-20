@@ -1,6 +1,7 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedStrings, FlexibleContexts #-}
 module Database.Pool where
 
+import Control.Monad.Trans.Control
 import Control.Concurrent
 import Data.Pool
 import Database.PostgreSQL.Simple
@@ -49,3 +50,6 @@ getPool rs db_name = do
             _ <- takeMVar (serverPoolLock rs)
             -- Finally return the connection we have gotten
             return cn
+
+withPool :: (MonadBaseControl IO m) => Pool t -> (t -> m b) -> m b
+withPool p f = withResource p $ \conn -> f conn

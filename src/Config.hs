@@ -23,5 +23,5 @@ getConnectInfo = do
             P.connectHost     = "0.0.0.0",
             P.connectUser     = db_user creds,
             P.connectPassword = db_password creds,
-            P.connectPort     = 3306
+            P.connectPort     = 5432
         }
