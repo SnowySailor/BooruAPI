@@ -4,13 +4,21 @@ import Datas
 import qualified Data.ByteString.Lazy as BL
 import Data.Aeson
 
-getImageId :: ImageData -> ImageId
-getImageId (ImageData d) = image_id d
-getImageId _             = 0
+getImageId :: Image -> ImageId
+getImageId (Image i)          = image_id i
+getImageId (ImageDuplicate i) = duplicate_image_id i
+getImageId _                  = 0
 
-getSearchImages :: SearchPage -> [ImageData]
+getSearchImages :: SearchPage -> [Image]
 getSearchImages (SearchPage _ i) = i
 getSearchImages _                = []
+
+getTagPageTags :: TagPage -> [Tag]
+getTagPageTags (TagPage t) = t
+getTagPageTags _           = []
+
+filterNulls :: (Nullable a) => [a] -> [a]
+filterNulls = filter isnull
 
 decodeNoMaybe :: (Nullable a, FromJSON a) => BL.ByteString -> a
 decodeNoMaybe s =

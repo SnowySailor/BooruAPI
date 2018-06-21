@@ -1,8 +1,14 @@
 module Main where
 
 import DerpAPI
+import Database.Pool
+import Database.Loader
 
 main :: IO ()
 main = do
-    user <- getUserWithFaves 216871
-    print user
+    resource <- defaultResources
+    pool     <- getPool resource "derpibooru"
+    image    <- getImage 1622923
+    print image
+    --result   <- withPool pool $ loadImageTags image
+    --print result
