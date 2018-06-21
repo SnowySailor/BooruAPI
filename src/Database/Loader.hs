@@ -27,7 +27,9 @@ loadImageTags (Image d) conn = do
 loadImageTags (ImageDuplicate _) _ = do
     logError "loadImageTags called on ImageDuplicate"
     return 0
+loadImageTags (ImageDeleted _) _ = do
+    logError "loadImageTags called on ImageDeleted"
+    return 0
 loadImageTags (NullImage) _ = do
     logError "loadImageTags called on NullImage"
     return 0
-

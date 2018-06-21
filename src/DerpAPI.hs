@@ -28,16 +28,18 @@ getImage i = do
 
 getImageFull :: ImageId -> IO ImageFull
 getImageFull i = do
-    imageData <- getImage i
-    comments  <- case imageData of
+    image <- getImage i
+    comments  <- case image of
         Image NullImageData -> return []
         Image d             -> getImageComments (image_id d) (image_comment_count d)
         _                   -> return []
-    return $ case imageData of
+    return $ case image of
         Image NullImageData              -> ImageFull NullImageData comments
         Image d                          -> ImageFull d comments
         ImageDuplicate NullDuplicateData -> ImageDuplicateFull NullDuplicateData
         ImageDuplicate d                 -> ImageDuplicateFull d
+        ImageDeleted NullDeletedData     -> ImageDeletedFull NullDeletedData
+        ImageDeleted d                   -> ImageDeletedFull d
         NullImage                        -> NullImageFull
 
 getImageComments :: ImageId -> Int -> IO [Comment]
@@ -45,7 +47,7 @@ getImageComments i count = do
     sett <- getSettings
     let (p, _) = divMod count $ getCommentsPerPage sett
     comments <- mapM (getCommentPage i) [1..(p+1)]
-    return $ flatten $ map (\(CommentPage c) -> c) comments
+    return . flatten . map (\(CommentPage c) -> c) $ filterNulls comments
 
 -- Comments
 
@@ -83,7 +85,6 @@ getUserFavoritesById i = do
         User d            -> getUserFavorites $ user_name d
         _                 -> return []
 
-
 getUserFavoritesByName :: Username -> IO [ImageId]
 getUserFavoritesByName u = getUserFavorites u
 
@@ -96,17 +97,17 @@ getUserFavorites u = do
         SearchPage c _ -> c
     let (p, _) = divMod totalCount $ getImagesPerPage sett
     userFaves  <- mapM (getSearchPage q) [2..(p+1)]
-    return $ map getImageId . flatten . map getSearchImages $ firstPage:userFaves
+    return . map getImageId . flatten . map getSearchImages $ firstPage:(filterNulls userFaves)
     where q = "faved_by:" ++ u
 
 -- Tags
 
 getAllTags :: PageNo -> IO [Tag]
 getAllTags maxPage = do
-    tags <- mapM getTagPage [1..maxPage]
-    return $ flatten tags
+    tagPages <- mapM getTagPage [1..maxPage]
+    return . filterNulls . flatten $ map getTagPageTags tagPages
 
-getTagPage :: PageNo -> IO [Tag]
+getTagPage :: PageNo -> IO TagPage
 getTagPage p = do
     json <- getTagsJSON p
     return $ decodeNoMaybe json

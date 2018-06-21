@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings, FlexibleContexts #-}
+{-# LANGUAGE FlexibleContexts #-}
 module Database.Pool where
 
 import Control.Monad.Trans.Control
