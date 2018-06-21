@@ -70,10 +70,10 @@ data Tag = Tag {
     tag_id                :: TagId       ,
     tag_name              :: String      ,
     tag_slug              :: String      ,
-    tag_short_desctiption :: String      ,
     tag_description       :: String      ,
-    tag_implied_tags      :: [TagId]     ,
+    tag_short_desctiption :: String      ,
     tag_aliased_to        :: Maybe TagId ,
+    tag_implied_tags      :: [TagId]     ,
     tag_category          :: Maybe String,
     tag_spoiler_image     :: Maybe String
 } | NullTag deriving (Show)
@@ -263,10 +263,10 @@ instance FromJSON Tag where
             <$> o .:  "id"
             <*> o .:  "name"
             <*> o .:  "slug"
-            <*> o .:  "short_description"
             <*> o .:  "description"
-            <*> o .:  "implied_tag_ids"
+            <*> o .:  "short_description"
             <*> o .:? "aliased_to_id"
+            <*> o .:  "implied_tag_ids"
             <*> o .:? "category"
             <*> o .:? "spoiler_image_uri"
     parseJSON _          = fail "Unable to parse non-Object"

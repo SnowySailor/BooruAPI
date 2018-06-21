@@ -31,6 +31,7 @@ insertComment = "insert into image_comment (id, image_id, author_id, body, poste
 -- Users
     -- Profiles
     -- Awards
+    -- Links
     -- Favorites
 
 insertUser :: P.Query
@@ -50,7 +51,7 @@ insertUserFavorite = "insert into user_favorite (user_id, image_id) values (?, ?
     -- Implied tags
 
 insertTag :: P.Query
-insertTag = undefined
+insertTag = "insert into tag (id, name, slug, description, short_description, aliased_to_id, category, spoiler_image) values (?, ?, ?, ?, ?, ?, ?, ?)"
 
-insertTagImplications :: P.Query
-insertTagImplications = "insert into tag_implication (tag_id, implied_tag_id) values (?, ?)"
+insertTagImplication :: P.Query
+insertTagImplication = "insert into tag_implication (tag_id, implied_tag_id) values (?, ?)"
