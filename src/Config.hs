@@ -20,8 +20,9 @@ getConnectInfo :: IO P.ConnectInfo
 getConnectInfo = do
     creds <- getDatabaseCreds
     return P.defaultConnectInfo {
-            P.connectHost     = "0.0.0.0",
+            P.connectHost     = db_host creds,
             P.connectUser     = db_user creds,
             P.connectPassword = db_password creds,
-            P.connectPort     = 5432
+            P.connectPort     = db_port creds,
+            P.connectDatabase = db_database creds    
         }

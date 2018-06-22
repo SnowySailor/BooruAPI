@@ -129,6 +129,9 @@ loadUserFavorites user conn =
 loadUserAwards :: User -> Connection -> IO Int64
 loadUserAwards user conn =
     case user of
+        User NullUserData -> do
+            logError "loadUserAwards called on NullUserData"
+            return 0
         User d ->
             executeMany conn insertUserAward awards
             where awards = map (\x -> (award_id x, user_id d, award_title x, award_label x, award_date x)) $ user_awards d
@@ -142,6 +145,9 @@ loadUserAwards user conn =
 loadUserLinks :: User -> Connection -> IO Int64
 loadUserLinks user conn =
     case user of
+        User NullUserData -> do
+            logError "loadUserLinks called on NullUserData"
+            return 0
         User d ->
             executeMany conn insertUserLink links
             where links = map (\x -> (link_user_id x, link_tag_id x, link_created_at x, link_state x)) $ user_links d
@@ -155,6 +161,9 @@ loadUserLinks user conn =
 loadUser :: User -> Connection -> IO (Int64, Int64, Int64)
 loadUser user conn =
     case user of
+        User NullUserData -> do
+            logError "loadUser called on NullUserData"
+            return (0, 0, 0)
         User d ->
             withTransaction conn $ do
                 dataLoaded <-

@@ -11,6 +11,7 @@ import Data.Pool
 import Data.Aeson
 import Data.Time.Clock
 import Data.Attoparsec.ByteString
+import GHC.Word
 
 -- Types
 
@@ -119,8 +120,11 @@ data Link = Link {
 } | NullLink deriving (Show)
 
 data DatabaseCredentials = DatabaseCredentials {
+    db_host     :: String,
+    db_port     :: Word16,
     db_user     :: String,
-    db_password :: String
+    db_password :: String,
+    db_database :: String
 } deriving (Show)
 
 data ServerResources = ServerResources {
@@ -302,13 +306,17 @@ instance FromJSON Settings where
 instance FromJSON DatabaseCredentials where
     parseJSON (Object v) = 
         DatabaseCredentials
-            <$> (v .: "user")
-            <*> (v .: "password")
+            <$> v .:? "host" .!= "0.0.0.0"
+            <*> v .:? "port" .!= 5432
+            <*> v .:  "user"
+            <*> v .:  "password"
+            <*> v .:? "database" .!= "postgres"
     parseJSON _          = fail "Unable to parse non-Object"
 
 instance Nullable Image where
     null = NullImage
     isnull (NullImage) = True
+    isnull _           = False
 instance Nullable ImageFull where
     null = NullImageFull
     isnull (NullImageFull) = True

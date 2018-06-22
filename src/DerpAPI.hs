@@ -3,6 +3,7 @@ module DerpAPI
         getImage,
         getImageFull,
         getImageComments,
+        getCommentPage,
         getUserByName,
         getUser,
         getUserFull,
@@ -47,6 +48,8 @@ getImageComments i count = do
     sett <- getSettings
     let (p, _) = divMod count $ getCommentsPerPage sett
     comments <- mapM (getCommentPage i) [1..(p+1)]
+    putStrLn $ show comments
+    putStrLn $ show $ filterNulls comments
     return . flatten . map (\(CommentPage c) -> c) $ filterNulls comments
 
 -- Comments

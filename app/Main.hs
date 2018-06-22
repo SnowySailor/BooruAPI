@@ -1,6 +1,8 @@
+--{-# LANGUAGE ScopedTypeVariables #-}
 module Main where
 
 import DerpAPI
+import Data.Pool
 import Database.Pool
 import Database.Loader
 
@@ -8,7 +10,7 @@ main :: IO ()
 main = do
     resource <- defaultResources
     pool     <- getPool resource "derpibooru"
-    image    <- getImage 1622923
-    print image
-    --result   <- withPool pool $ loadImageTags image
-    --print result
+    users    <- mapM getUserFull [1..5]
+    print users
+    result   <- withResource pool $ \conn -> mapM (\x -> loadUserFull x conn) users 
+    print result

@@ -18,7 +18,7 @@ getTagPageTags (TagPage t) = t
 getTagPageTags _           = []
 
 filterNulls :: (Nullable a) => [a] -> [a]
-filterNulls = filter isnull
+filterNulls = filter $ not . isnull
 
 decodeNoMaybe :: (Nullable a, FromJSON a) => BL.ByteString -> a
 decodeNoMaybe s =
