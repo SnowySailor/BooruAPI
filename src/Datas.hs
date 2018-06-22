@@ -1,8 +1,11 @@
 {-# LANGUAGE FlexibleInstances, UndecidableInstances, OverloadedStrings #-}
 module Datas where
 
+import Control.Applicative
 import Control.Concurrent
 import qualified Data.Map as M
+import Database.PostgreSQL.Simple.ToField
+import Database.PostgreSQL.Simple.ToRow
 import Database.PostgreSQL.Simple
 import Data.Pool
 import Data.Aeson
@@ -80,7 +83,7 @@ data Tag = Tag {
 
 data Comment = Comment {
     comment_id        :: CommentId,
-    comment_image     :: ImageId  ,
+    comment_image_id  :: ImageId  ,
     comment_author    :: Username ,
     comment_body      :: String   ,
     comment_posted_at :: UTCTime  ,
@@ -131,20 +134,26 @@ class Nullable a where
     null :: a
     isnull :: a -> Bool
 
+class Validatable a where
+    invalid :: a
+    isvalid :: a -> Bool
+
 class (Show a) => Print a where
     toString :: a -> String
 
 -- Instances
 
 instance FromJSON Image where
-    parseJSON o = do
-        eImage <- eitherP (parseJSON o) $ eitherP (parseJSON o) (parseJSON o)
+    parseJSON (Object o) = do
+        let obj = (Object o)
+        eImage <- eitherP (parseJSON obj) $ eitherP (parseJSON obj) (parseJSON obj)
         return $ case eImage of
             Left imageRegular           -> Image imageRegular 
             Right eImage2 -> 
                 case eImage2 of
                     Left imageDuplicate -> ImageDuplicate imageDuplicate
                     Right imageDeleted  -> ImageDeleted imageDeleted
+    parseJSON _          = pure NullImage
 
 instance FromJSON User where
     parseJSON o = do
@@ -160,7 +169,8 @@ instance FromJSON DeletedData where
             <*> o .:  "created_at"
             <*> o .:  "updated_at"
             <*> o .:  "first_seen_at"
-    parseJSON _          = fail "Unable to parse non-Object"
+        <|> pure NullDeletedData
+    parseJSON _          = pure NullDeletedData
 
 instance FromJSON DuplicateData where
     parseJSON (Object o) =
@@ -171,7 +181,8 @@ instance FromJSON DuplicateData where
             <*> o .:  "created_at"
             <*> o .:  "updated_at"
             <*> o .:  "first_seen_at"
-    parseJSON _          = fail "Unable to parse non-Object"
+        <|> pure NullDuplicateData
+    parseJSON _          = pure NullDuplicateData
 
 instance FromJSON ImageData where
     parseJSON (Object o) =
@@ -191,26 +202,30 @@ instance FromJSON ImageData where
             <*> o .:  "height"
             <*> o .:  "width"
             <*> o .:  "aspect_ratio"
-    parseJSON _          = fail "Unable to parse non-Object"
+        <|> pure NullImageData
+    parseJSON _          = pure NullImageData
 
 instance FromJSON SearchPage where
     parseJSON (Object o) =
         SearchPage
             <$> o .: "total"
             <*> o .: "search"
-    parseJSON _          = fail "Unable to parse non-Object"
+        <|> pure NullSearchPage
+    parseJSON _          = pure NullSearchPage
 
 instance FromJSON CommentPage where
     parseJSON (Object o) =
         CommentPage <$> o .: "comments"
-    parseJSON _          = fail "Unable to parse non-Object"
+        <|> pure NullCommentPage
+    parseJSON _          = pure NullCommentPage
 
 instance FromJSON TagPage where
-    parseJSON o = do
-        tags <- parseJSON o
+    parseJSON (Object o) = do
+        tags <- parseJSON (Object o)
         return $ case tags of
             Just t  -> TagPage t
             Nothing -> NullTagPage
+    parseJSON _          = pure NullTagPage
 
 instance FromJSON Comment where
     parseJSON (Object o) =
@@ -221,7 +236,8 @@ instance FromJSON Comment where
             <*> o .: "body"
             <*> o .: "posted_at"
             <*> o .: "deleted"
-    parseJSON _          = fail "Unable to parse non-Object"
+        <|> pure NullComment
+    parseJSON _          = pure NullComment
 
 instance FromJSON UserData where
     parseJSON (Object o) =
@@ -237,7 +253,8 @@ instance FromJSON UserData where
             <*> o .:  "topic_count"
             <*> o .:  "awards"
             <*> o .:  "links"
-    parseJSON _          = fail "Unable to parse non-Object"
+        <|> pure NullUserData
+    parseJSON _          = pure NullUserData
 
 instance FromJSON Award where
     parseJSON (Object o) =
@@ -246,7 +263,8 @@ instance FromJSON Award where
             <*> o .: "title"
             <*> o .: "label"
             <*> o .: "awarded_on"
-    parseJSON _          = fail "Unable to parse non-Object"
+        <|> pure NullAward
+    parseJSON _          = pure NullAward
 
 instance FromJSON Link where
     parseJSON (Object o) =
@@ -255,7 +273,8 @@ instance FromJSON Link where
             <*> o .: "tag_id"
             <*> o .: "created_at"
             <*> o .: "state"
-    parseJSON _          = fail "Unable to parse non-Object"
+        <|> pure NullLink
+    parseJSON _          = pure NullLink
 
 instance FromJSON Tag where
     parseJSON (Object o) =
@@ -269,7 +288,8 @@ instance FromJSON Tag where
             <*> o .:  "implied_tag_ids"
             <*> o .:? "category"
             <*> o .:? "spoiler_image_uri"
-    parseJSON _          = fail "Unable to parse non-Object"
+        <|> pure NullTag
+    parseJSON _          = pure NullTag
 
 instance FromJSON Settings where
     parseJSON (Object v) = 
@@ -289,7 +309,6 @@ instance FromJSON DatabaseCredentials where
 instance Nullable Image where
     null = NullImage
     isnull (NullImage) = True
-    isnull _           = False
 instance Nullable ImageFull where
     null = NullImageFull
     isnull (NullImageFull) = True
@@ -344,3 +363,13 @@ instance {-# OVERLAPPING #-} Print String where
     toString = id
 instance (Show a) => Print a where
     toString = show
+
+
+instance (ToField a, ToField b, ToField c, ToField d, ToField e, ToField f,
+          ToField g, ToField h, ToField i, ToField j, ToField k, ToField l,
+          ToField m, ToField n)
+    => ToRow (a,b,c,d,e,f,g,h,i,j,k,l,m,n) where
+    toRow (a,b,c,d,e,f,g,h,i,j,k,l,m,n) =
+        [toField a, toField b, toField c, toField d, toField e, toField f,
+         toField g, toField h, toField i, toField j, toField k, toField l,
+         toField m, toField n]
