@@ -1,4 +1,3 @@
---{-# LANGUAGE ScopedTypeVariables #-}
 module Main where
 
 import DerpAPI
@@ -10,7 +9,7 @@ main :: IO ()
 main = do
     resource <- defaultResources
     pool     <- getPool resource "derpibooru"
-    users    <- mapM getUserFull [1..5]
+    users    <- mapM getUserFull ([1..5] :: [Int])
     print users
     result   <- withResource pool $ \conn -> mapM (\x -> loadUserFull x conn) users 
     print result

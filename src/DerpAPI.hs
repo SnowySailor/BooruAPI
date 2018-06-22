@@ -66,7 +66,7 @@ getUser i = do
     json <- getUserJSON i
     return $ decodeNoMaybe json
 
-getUserFull :: UserId -> IO UserFull
+getUserFull :: (Print a) => a -> IO UserFull
 getUserFull i = do
     json <- getUserJSON i
     let user_data = decodeNoMaybe json
