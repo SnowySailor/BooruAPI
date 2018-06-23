@@ -22,18 +22,18 @@ import Network.URI.Encode
 
 -- Images
 
-getImage :: ImageId -> IO Image
-getImage i = do
-    imageData <- getImageJSON i
+getImage :: ImageId -> Settings -> IO Image
+getImage i s = do
+    imageData <- getImageJSON i s
     return $ decodeNoMaybe imageData
 
-getImageFull :: ImageId -> IO ImageFull
-getImageFull i = do
-    image <- getImage i
+getImageFull :: ImageId -> Settings -> IO ImageFull
+getImageFull i s = do
+    image <- getImage i s
     comments  <- case image of
         Image NullImageData -> return []
         Image d             -> if (image_comment_count d) > 0 then
-                                    getImageComments (image_id d) (image_comment_count d)
+                                    getImageComments (image_id d) (image_comment_count d) s
                                 else
                                     return []
         _                   -> return []
@@ -46,79 +46,77 @@ getImageFull i = do
         ImageDeleted d                   -> ImageDeletedFull d
         NullImage                        -> NullImageFull
 
-getImageComments :: ImageId -> Int -> IO [Comment]
-getImageComments i count = do
-    sett <- getSettings
-    let (p, _) = divMod count $ getCommentsPerPage sett
-    comments <- mapM (getCommentPage i) [1..(p+1)]
+getImageComments :: ImageId -> Int -> Settings -> IO [Comment]
+getImageComments i count s = do
+    let (p, _) = divMod count $ comments_per_page s
+    comments <- mapM (\x -> getCommentPage i x s) [1..(p+1)]
     return . flatten . map (\(CommentPage c) -> c) $ filterNulls comments
 
 -- Comments
 
-getCommentPage :: ImageId -> PageNo -> IO CommentPage
-getCommentPage i p = do
-    json <- getCommentsJSON i p
+getCommentPage :: ImageId -> PageNo -> Settings -> IO CommentPage
+getCommentPage i p s = do
+    json <- getCommentsJSON i p s
     return $ decodeNoMaybe json
 
 -- Users
 
-getUser :: UserId -> IO User
-getUser i = do
-    json <- getUserJSON i
+getUser :: UserId -> Settings -> IO User
+getUser i s = do
+    json <- getUserJSON i s
     return $ decodeNoMaybe json
 
-getUserFull :: (Print a) => a -> IO UserFull
-getUserFull i = do
-    json <- getUserJSON i
+getUserFull :: (Print a) => a -> Settings -> IO UserFull
+getUserFull i s = do
+    json <- getUserJSON i s
     let user_data = decodeNoMaybe json
     faves <- case user_data of
         NullUserData -> return []
-        UserData{}   -> getUserFavorites $ user_name user_data
+        UserData{}   -> getUserFavorites (user_name user_data) s
     return $ UserFull user_data faves
 
-getUserByName :: Username -> IO User
-getUserByName s = do
-    json <- getUserJSON $ encode s
+getUserByName :: Username -> Settings -> IO User
+getUserByName n s = do
+    json <- getUserJSON (encode n) s
     return $ decodeNoMaybe json
 
-getUserFavoritesById :: UserId -> IO [ImageId]
-getUserFavoritesById i = do
-    user <- getUser i
+getUserFavoritesById :: UserId -> Settings -> IO [ImageId]
+getUserFavoritesById i s = do
+    user <- getUser i s
     case user of
         User NullUserData -> return []
-        User d            -> getUserFavorites $ user_name d
+        User d            -> getUserFavorites (user_name d) s
         _                 -> return []
 
-getUserFavoritesByName :: Username -> IO [ImageId]
-getUserFavoritesByName u = getUserFavorites u
+getUserFavoritesByName :: Username -> Settings -> IO [ImageId]
+getUserFavoritesByName u s = getUserFavorites u s
 
-getUserFavorites :: Username -> IO [ImageId]
-getUserFavorites u = do
-    sett <- getSettings
-    firstPage  <- getSearchPage q 1
+getUserFavorites :: Username -> Settings -> IO [ImageId]
+getUserFavorites u s = do
+    firstPage  <- getSearchPage q 1 s
     totalCount <- return $ case firstPage of
         NullSearchPage -> 0
         SearchPage c _ -> c
-    let (p, _) = divMod totalCount $ getImagesPerPage sett
-    userFaves  <- mapM (getSearchPage q) [2..(p+1)]
+    let (p, _) = divMod totalCount $ images_per_page s
+    userFaves  <- mapM (\x -> getSearchPage q x s) [2..(p+1)]
     return . map getImageId . flatten . map getSearchImages $ firstPage:(filterNulls userFaves)
     where q = "faved_by:" ++ u
 
 -- Tags
 
-getAllTags :: PageNo -> IO [Tag]
-getAllTags maxPage = do
-    tagPages <- mapM getTagPage [1..maxPage]
+getAllTags :: PageNo -> Settings -> IO [Tag]
+getAllTags maxPage s = do
+    tagPages <- mapM (\x -> getTagPage x s) [1..maxPage]
     return . filterNulls . flatten $ map getTagPageTags tagPages
 
-getTagPage :: PageNo -> IO TagPage
-getTagPage p = do
-    json <- getTagsJSON p
+getTagPage :: PageNo -> Settings -> IO TagPage
+getTagPage p s = do
+    json <- getTagsJSON p s
     return $ decodeNoMaybe json
 
 -- Search
 
-getSearchPage :: String -> Int -> IO SearchPage
-getSearchPage q i = do
-    json <- getSearchJSON q i
+getSearchPage :: String -> Int -> Settings -> IO SearchPage
+getSearchPage q i s = do
+    json <- getSearchJSON q i s
     return $ decodeNoMaybe json

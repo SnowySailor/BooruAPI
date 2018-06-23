@@ -24,5 +24,5 @@ getConnectInfo = do
             P.connectUser     = db_user creds,
             P.connectPassword = db_password creds,
             P.connectPort     = db_port creds,
-            P.connectDatabase = db_database creds    
+            P.connectDatabase = db_database creds 
         }

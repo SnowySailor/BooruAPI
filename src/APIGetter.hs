@@ -6,64 +6,38 @@ import Network.HTTP.Conduit
 import Network.URI.Encode (encode)
 import Data.ByteString.Lazy (ByteString)
 
-getKey :: Settings -> String
-getKey = (\(Settings s _ _) -> s)
-
-getImagesPerPage :: Settings -> Int
-getImagesPerPage = (\(Settings _ i _) -> i)
-
-getCommentsPerPage :: Settings -> Int
-getCommentsPerPage = (\(Settings _ _ i) -> i)
-
+-- Defining request urls
 baseUrl :: String
 baseUrl = "https://derpibooru.org"
 
-imageAPI :: (Print a) => a -> IO String
-imageAPI i = do
-    sett <- getSettings
-    return $ baseUrl ++ "/images/" ++ (toString i) ++ ".json?key=" ++ (toString . getKey $ sett)
+imageAPI :: (Print a) => a -> Settings -> String
+imageAPI i s = baseUrl ++ "/images/" ++ (toString i) ++ ".json?key=" ++ (toString $ api_key s)
 
-commentsAPI :: (Print a, Print b) => a -> b -> IO String
-commentsAPI i p = do
-    sett <- getSettings
-    return $ baseUrl ++ "/images/" ++ (toString i) ++ "/comments.json?page=" ++ (toString p) ++ "&key=" ++ (toString . getKey $ sett)
+commentsAPI :: (Print a, Print b) => a -> b -> Settings -> String
+commentsAPI i p s = baseUrl ++ "/images/" ++ (toString i) ++ "/comments.json?page=" ++ (toString p) ++ "&key=" ++ (toString $ api_key s)
 
-tagsAPI :: (Print a) => a -> IO String
-tagsAPI p = do
-    sett <- getSettings
-    return $ baseUrl ++ "/tags.json?page=" ++ (toString p) ++ "&key=" ++ (toString . getKey $ sett)
+tagsAPI :: (Print a) => a -> Settings -> String
+tagsAPI p s = baseUrl ++ "/tags.json?page=" ++ (toString p) ++ "&key=" ++ (toString $ api_key s)
 
-userAPI :: (Print a) => a -> IO String
-userAPI i = do
-    sett <- getSettings
-    return $ baseUrl ++ "/profiles/" ++ (toString i) ++ ".json?key=" ++ (toString . getKey $ sett)
+userAPI :: (Print a) => a -> Settings -> String
+userAPI i s = baseUrl ++ "/profiles/" ++ (toString i) ++ ".json?key=" ++ (toString $ api_key s)
 
-searchAPI :: (Print a) => String -> a -> IO String
-searchAPI q p = do
-    sett <- getSettings
-    return $ baseUrl ++ "/search/index.json?perpage=" ++ (toString . getImagesPerPage $ sett) ++ "&page=" ++ (toString p) ++ "&q=" ++ (encode q) ++ "&key=" ++ (toString . getKey $ sett)
+searchAPI :: (Print a) => String -> a -> Settings -> String
+searchAPI q p s = baseUrl ++ "/search/index.json?perpage=" ++ (toString $ images_per_page s) ++ "&page=" ++ (toString p) ++ "&q=" ++ (encode q) ++ "&key=" ++ (toString $ api_key s)
 
-getUserJSON :: (Print a) => a -> IO ByteString
-getUserJSON i = do
-    url <- userAPI i
-    simpleHttp url
 
-getImageJSON :: (Print a) => a -> IO ByteString
-getImageJSON i = do
-    url <- imageAPI i
-    simpleHttp url
+-- Making Requests
+getUserJSON :: (Print a) => a -> Settings -> IO ByteString
+getUserJSON i s = simpleHttp $ userAPI i s
 
-getTagsJSON :: (Print a) => a -> IO ByteString
-getTagsJSON p = do
-    url <- tagsAPI p
-    simpleHttp url
+getImageJSON :: (Print a) => a -> Settings -> IO ByteString
+getImageJSON i s = simpleHttp $ imageAPI i s
 
-getCommentsJSON :: (Print a, Print b) => a -> b -> IO ByteString
-getCommentsJSON i p = do
-    url <- commentsAPI i p
-    simpleHttp url
+getTagsJSON :: (Print a) => a -> Settings -> IO ByteString
+getTagsJSON p s = simpleHttp $ tagsAPI p s
 
-getSearchJSON :: (Print a) => String -> a -> IO ByteString
-getSearchJSON s p = do
-    url <- searchAPI s p
-    simpleHttp url
+getCommentsJSON :: (Print a, Print b) => a -> b -> Settings -> IO ByteString
+getCommentsJSON i p s = simpleHttp $ commentsAPI i p s
+
+getSearchJSON :: (Print a) => String -> a -> Settings -> IO ByteString
+getSearchJSON s p sett = simpleHttp $ searchAPI s p sett
