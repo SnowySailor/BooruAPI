@@ -32,7 +32,10 @@ getImageFull i = do
     image <- getImage i
     comments  <- case image of
         Image NullImageData -> return []
-        Image d             -> getImageComments (image_id d) (image_comment_count d)
+        Image d             -> if (image_comment_count d) > 0 then
+                                    getImageComments (image_id d) (image_comment_count d)
+                                else
+                                    return []
         _                   -> return []
     return $ case image of
         Image NullImageData              -> ImageFull NullImageData comments
@@ -48,8 +51,6 @@ getImageComments i count = do
     sett <- getSettings
     let (p, _) = divMod count $ getCommentsPerPage sett
     comments <- mapM (getCommentPage i) [1..(p+1)]
-    putStrLn $ show comments
-    putStrLn $ show $ filterNulls comments
     return . flatten . map (\(CommentPage c) -> c) $ filterNulls comments
 
 -- Comments

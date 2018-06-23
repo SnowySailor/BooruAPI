@@ -1,4 +1,4 @@
-secrets.yaml
+settings.yaml
 database.yaml
 *.hi
 *.o

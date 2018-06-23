@@ -13,7 +13,7 @@ getDatabaseCreds = do
 
 getSettings :: IO Settings
 getSettings = do
-    creds <- decodeFileEither "./secrets.yaml" :: IO (E.Either ParseException [Settings])
+    creds <- decodeFileEither "./settings.yaml" :: IO (E.Either ParseException [Settings])
     return . head $ either (error . show) id creds
 
 getConnectInfo :: IO P.ConnectInfo
