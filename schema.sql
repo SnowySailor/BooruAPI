@@ -1,7 +1,21 @@
+DO $$
+BEGIN
+-- Terminate all connections
+IF EXISTS (SELECT 1 FROM pg_database WHERE datname = 'derpibooru') THEN
+    REVOKE CONNECT ON DATABASE derpibooru FROM public;
+    PERFORM pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'derpibooru';
+END IF;
+END$$ LANGUAGE plpgsql;
+
+-- Drop and recreate database/schema
 DROP DATABASE IF EXISTS derpibooru;
 CREATE DATABASE derpibooru WITH OWNER = 'root' ENCODING = 'UTF8';
 \connect derpibooru;
 CREATE SCHEMA derpibooru;
+
+
+-- Create tables
+
 
 DROP TABLE IF EXISTS derpibooru.IMAGE_TAG;
 DROP INDEX IF EXISTS IMAGE_TAG$TAG_ID;
@@ -181,3 +195,6 @@ CREATE TABLE derpibooru.TAG_IMPLICATION (
 CREATE INDEX TAG_IMPLICATION$IMPLIED_TAG_ID ON derpibooru.TAG_IMPLICATION (
     IMPLIED_TAG_ID
 );
+
+
+GRANT CONNECT ON DATABASE derpibooru TO public;
