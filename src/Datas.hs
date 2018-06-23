@@ -11,6 +11,7 @@ import Data.Pool
 import Data.Aeson
 import Data.Time.Clock
 import Data.Attoparsec.ByteString
+import Data.Text
 import GHC.Word
 
 -- Types
@@ -25,7 +26,6 @@ type Username  = String
 
 -- Datas
 
-data Settings    = Settings String Int Int deriving (Show)
 data CommentPage = CommentPage [Comment] | NullCommentPage deriving (Show)
 data SearchPage  = SearchPage Int [Image] | NullSearchPage deriving (Show)
 data TagPage     = TagPage [Tag] | NullTagPage deriving (Show)
@@ -124,13 +124,22 @@ data DatabaseCredentials = DatabaseCredentials {
     db_port     :: Word16,
     db_user     :: String,
     db_password :: String,
-    db_database :: String
+    db_database :: String,
+    db_schema   :: String
 } deriving (Show)
 
 data ServerResources = ServerResources {
     serverPools    :: MVar (M.Map String (Pool Connection)),
     serverPoolLock :: MVar () -- write lock
 }
+
+data Settings = Settings {
+    api_key           :: String,
+    images_per_page   :: Int,
+    comments_per_page :: Int,
+    load_start_image  :: Int,
+    load_end_image    :: Int
+} deriving (Show)
 
 -- Classes
 
@@ -299,18 +308,21 @@ instance FromJSON Settings where
     parseJSON (Object v) = 
         Settings
             <$> v .:  "key"
-            <*> v .:? "images_per_page" .!= 50
+            <*> v .:? "images_per_page"   .!= 50
             <*> v .:? "comments_per_page" .!= 20
+            <*> v .:? "start_image_id"    .!= 1
+            <*> v .:? "end_image_id"      .!= 1
     parseJSON _          = fail "Unable to parse non-Object"
 
 instance FromJSON DatabaseCredentials where
     parseJSON (Object v) = 
         DatabaseCredentials
-            <$> v .:? "host" .!= "0.0.0.0"
-            <*> v .:? "port" .!= 5432
+            <$> v .:? "host"     .!= "0.0.0.0"
+            <*> v .:? "port"     .!= 5432
             <*> v .:  "user"
             <*> v .:  "password"
             <*> v .:? "database" .!= "postgres"
+            <*> v .:? "schema"   .!= "public"
     parseJSON _          = fail "Unable to parse non-Object"
 
 instance Nullable Image where
