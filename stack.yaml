@@ -40,7 +40,9 @@ packages:
 # (e.g., acme-missiles-0.3)
 extra-deps: [
     dates-0.2.2.1,
-    aeson-1.4.0.0
+    aeson-1.4.0.0,
+    async-2.2.1,
+    exceptions-0.10.0
 ]
 
 # Override default flag values for local packages and extra-deps

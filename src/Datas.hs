@@ -11,7 +11,6 @@ import Data.Pool
 import Data.Aeson
 import Data.Time.Clock
 import Data.Attoparsec.ByteString
-import Data.Text
 import GHC.Word
 
 -- Types
@@ -137,8 +136,12 @@ data Settings = Settings {
     api_key           :: String,
     images_per_page   :: Int,
     comments_per_page :: Int,
-    load_start_image  :: Int,
-    load_end_image    :: Int
+    load_image_start  :: Int,
+    load_image_end    :: Int,
+    load_user_start   :: Int,
+    load_user_end     :: Int,
+    load_full_images  :: Bool,
+    load_full_users   :: Bool
 } deriving (Show)
 
 -- Classes
@@ -310,8 +313,12 @@ instance FromJSON Settings where
             <$> v .:  "key"
             <*> v .:? "images_per_page"   .!= 50
             <*> v .:? "comments_per_page" .!= 20
-            <*> v .:? "start_image_id"    .!= 1
-            <*> v .:? "end_image_id"      .!= 1
+            <*> v .:? "start_image_id"    .!= 0
+            <*> v .:? "end_image_id"      .!= 0
+            <*> v .:? "start_user_id"     .!= 0
+            <*> v .:? "end_user_id"       .!= 0
+            <*> v .:? "load_full_images"  .!= False
+            <*> v .:? "load_full_users"   .!= False
     parseJSON _          = fail "Unable to parse non-Object"
 
 instance FromJSON DatabaseCredentials where

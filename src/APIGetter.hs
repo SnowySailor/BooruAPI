@@ -1,7 +1,6 @@
 module APIGetter where
 
 import Datas
-import Config
 import Network.HTTP.Conduit
 import Network.URI.Encode (encode)
 import Data.ByteString.Lazy (ByteString)
