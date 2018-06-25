@@ -20,7 +20,7 @@ main :: IO ()
 main = do
     -- Setup
     resource <- defaultResources
-    pool     <- getPool resource "database"
+    pool     <- getPool resource "derpibooru"
     settings <- getSettings
     creds    <- getDatabaseCreds
     sched    <- atomically $ do
@@ -37,6 +37,11 @@ main = do
             schedOut             = out
         }
     let schema = db_schema creds
+        appSettings = AppSettings {
+            app_settings = settings,
+            app_db_creds = creds,
+            app_db_pool  = pool
+        }
 
     -- Start tasks
 
@@ -44,17 +49,18 @@ main = do
         userList  = [(load_user_start settings)..(load_user_end settings)]
     populateImageQueueThread <- forkIO $ addToQueue (schedImageQueue sched) imageList
     populateUserQueueThread  <- forkIO $ addToQueue (schedUserQueue sched) userList
-    imageThread              <- forkIO $ processTBQueue sched schedImageQueue processImage
-    userThread               <- forkIO $ processTBQueue sched schedUserQueue processUser
-    imageRetryThread         <- forkIO $ processTQueue sched schedImageRetryQueue processImageRetry
-    userRetryThread          <- forkIO $ processTQueue sched schedUserRetryQueue processUserRetry
+    imageThread              <- forkIO $ processTBQueue sched schedImageQueue $ processImage appSettings
+    userThread               <- forkIO $ processTBQueue sched schedUserQueue $ processUser appSettings
+    imageRetryThread         <- forkIO $ processTQueue sched schedImageRetryQueue $ processImageRetry appSettings
+    userRetryThread          <- forkIO $ processTQueue sched schedUserRetryQueue $ processUserRetry appSettings
     outThread                <- forkIO $ processTQueue sched schedOut processOut
     waiter <- async $ atomically $ do
         empty1 <- isEmptyTBQueue $ schedImageQueue sched
         empty2 <- isEmptyTBQueue $ schedUserQueue sched
         empty3 <- isEmptyTQueue  $ schedImageRetryQueue sched
         empty4 <- isEmptyTQueue  $ schedUserRetryQueue sched
-        unless (all (==True) [empty1, empty2, empty3, empty4]) retry
+        empty5 <- isEmptyTQueue  $ schedOut sched
+        unless (all (==True) [empty1, empty2, empty3, empty4, empty5]) retry
         return ()
     putStrLn "Running..."
     catch
@@ -83,17 +89,21 @@ processTQueue sched q f = forever $ do
     toProcess <- atomically $ readTQueue (q sched)
     f sched toProcess
 
-processImage :: Scheduler -> ImageId -> IO ()
-processImage _ _ = return ()
+processImage :: AppSettings -> Scheduler -> ImageId -> IO ()
+processImage sett sched i = do
+    image <- getImage i (app_settings sett)
+    result <- withResource (app_db_pool sett) $ \conn -> loadImage image conn (db_schema $ app_db_creds sett)
+    putStrLn $ show result
 
-processUser :: Scheduler -> UserId -> IO ()
-processUser _ _ = return ()
 
-processImageRetry :: Scheduler -> Request -> IO ()
-processImageRetry _ _ = return ()
+processUser :: AppSettings -> Scheduler -> UserId -> IO ()
+processUser _ _ _ = return ()
 
-processUserRetry :: Scheduler -> Request -> IO ()
-processUserRetry _ _ = return ()
+processImageRetry :: AppSettings -> Scheduler -> Request -> IO ()
+processImageRetry _ _ _ = return ()
+
+processUserRetry :: AppSettings -> Scheduler -> Request -> IO ()
+processUserRetry _ _ _ = return ()
 
 processOut :: Scheduler -> String -> IO ()
 processOut _ s = putStrLn s

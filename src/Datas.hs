@@ -144,6 +144,12 @@ data Settings = Settings {
     load_full_users   :: Bool
 } deriving (Show)
 
+data AppSettings = AppSettings {
+    app_settings :: Settings,
+    app_db_creds :: DatabaseCredentials,
+    app_db_pool  :: Pool Connection
+}
+
 -- Classes
 
 class Nullable a where
