@@ -1,7 +1,8 @@
 module APIGetter where
 
 import Datas
-import Network.HTTP.Conduit
+import Control.Lens
+import Network.Wreq
 import Network.URI.Encode (encode)
 import Data.ByteString.Lazy (ByteString)
 
@@ -26,17 +27,27 @@ searchAPI q p s = baseUrl ++ "/search/index.json?perpage=" ++ (toString $ images
 
 
 -- Making Requests
-getUserJSON :: (Print a) => a -> Settings -> IO ByteString
-getUserJSON i s = simpleHttp $ userAPI i s
+getUserJSON :: (Print a) => a -> Settings -> IO (ByteString, Int)
+getUserJSON i s = do
+    resp <- get $ userAPI i s
+    return (resp ^. responseBody, resp ^. responseStatus . statusCode)
 
-getImageJSON :: (Print a) => a -> Settings -> IO ByteString
-getImageJSON i s = simpleHttp $ imageAPI i s
+getImageJSON :: (Print a) => a -> Settings -> IO (ByteString, Int)
+getImageJSON i s = do
+    resp <- get $ imageAPI i s
+    return (resp ^. responseBody, resp ^. responseStatus . statusCode)
 
-getTagsJSON :: (Print a) => a -> Settings -> IO ByteString
-getTagsJSON p s = simpleHttp $ tagsAPI p s
+getTagsJSON :: (Print a) => a -> Settings -> IO (ByteString, Int)
+getTagsJSON p s = do
+    resp <- get $ tagsAPI p s
+    return (resp ^. responseBody, resp ^. responseStatus . statusCode)
 
-getCommentsJSON :: (Print a, Print b) => a -> b -> Settings -> IO ByteString
-getCommentsJSON i p s = simpleHttp $ commentsAPI i p s
+getCommentsJSON :: (Print a, Print b) => a -> b -> Settings -> IO (ByteString, Int)
+getCommentsJSON i p s = do
+    resp <- get $ commentsAPI i p s
+    return (resp ^. responseBody, resp ^. responseStatus . statusCode)
 
-getSearchJSON :: (Print a) => String -> a -> Settings -> IO ByteString
-getSearchJSON s p sett = simpleHttp $ searchAPI s p sett
+getSearchJSON :: (Print a) => String -> a -> Settings -> IO (ByteString, Int)
+getSearchJSON s p sett = do
+    resp <- get $ searchAPI s p sett
+    return (resp ^. responseBody, resp ^. responseStatus . statusCode)

@@ -125,8 +125,11 @@ handleUser :: AppSettings -> Scheduler -> UserId -> IO (Int64, Int64, Int64, Int
 handleUser sett sched u = do
     (user, status) <- getUser u (app_settings sett)
     case status of
-        200 -> withResource (app_db_pool sett) $ \conn -> loadUser user conn (db_schema $ app_db_creds sett)
+        200 -> do
+            (a,b,c) <- withResource (app_db_pool sett) $ \conn -> loadUser user conn (db_schema $ app_db_creds sett)
+            return (a,b,c,0)
         _   -> do
+            putStrLn $ "Got " ++ show status ++ " from user. Retrying."
             atomically $ writeTQueue (schedUserRetryQueue sched) $ Request u 0 [status]
             return (0,0,0,0)
 
@@ -134,8 +137,11 @@ handleImage :: AppSettings -> Scheduler -> ImageId -> IO (Int64, Int64, Int64)
 handleImage sett sched i = do
     (image, status) <- getImage i (app_settings sett)
     case status of
-        200 -> withResource (app_db_pool sett) $ \conn -> loadImage image conn (db_schema $ app_db_creds sett)
+        200 -> do
+            (a,b) <- withResource (app_db_pool sett) $ \conn -> loadImage image conn (db_schema $ app_db_creds sett)
+            return (a,b,0)
         _   -> do
+            putStrLn $ "Got " ++ show status ++ " from image. Retrying."
             atomically $ writeTQueue (schedImageRetryQueue sched) $ Request i 0 [status]
             return (0,0,0)
 
