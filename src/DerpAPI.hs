@@ -21,14 +21,14 @@ import Network.URI.Encode
 
 -- Images
 
-getImage :: ImageId -> Settings -> IO Image
+getImage :: ImageId -> Settings -> IO (Image, Int)
 getImage i s = do
-    imageData <- getImageJSON i s
-    return $ decodeNoMaybe imageData
+    (imageData, status) <- getImageJSON i s
+    return (decodeNoMaybe imageData, status)
 
-getImageFull :: ImageId -> Settings -> IO ImageFull
+getImageFull :: ImageId -> Settings -> IO (ImageFull, Int)
 getImageFull i s = do
-    image <- getImage i s
+    (image, status) <- getImage i s
     comments  <- case image of
         Image NullImageData -> return []
         Image d             -> if (image_comment_count d) > 0 then

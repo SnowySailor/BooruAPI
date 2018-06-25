@@ -3,7 +3,8 @@ module Datas where
 
 import Control.Applicative
 import Control.Concurrent
-import qualified Data.Map as M
+import Control.Concurrent.STM
+import Data.Map
 import Database.PostgreSQL.Simple.ToField
 import Database.PostgreSQL.Simple.ToRow
 import Database.PostgreSQL.Simple
@@ -128,7 +129,7 @@ data DatabaseCredentials = DatabaseCredentials {
 } deriving (Show)
 
 data ServerResources = ServerResources {
-    serverPools    :: MVar (M.Map String (Pool Connection)),
+    serverPools    :: MVar (Map String (Pool Connection)),
     serverPoolLock :: MVar () -- write lock
 }
 
@@ -148,6 +149,20 @@ data AppSettings = AppSettings {
     app_settings :: Settings,
     app_db_creds :: DatabaseCredentials,
     app_db_pool  :: Pool Connection
+}
+
+data Request = Request {
+    requestId         :: Int,
+    requestTries      :: Int,
+    requestRespCodes  :: [Int]
+} deriving (Show)
+
+data Scheduler = Scheduler {
+    schedImageQueue      :: TBQueue Int,
+    schedUserQueue       :: TBQueue Int,
+    schedImageRetryQueue :: TQueue Request,
+    schedUserRetryQueue  :: TQueue Request,
+    schedOut             :: TQueue String
 }
 
 -- Classes

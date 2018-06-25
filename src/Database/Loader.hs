@@ -85,7 +85,7 @@ loadImageFull image conn s =
     case image of
         ImageFull d c -> do
             withTransaction conn $ do
-                (dataLoaded, tagsLoaded) <- loadImageData d conn s
+                (tagsLoaded, dataLoaded) <- loadImageData d conn s
                 commentsLoaded           <- loadComments c conn s
                 return (dataLoaded, tagsLoaded, commentsLoaded)
         ImageDuplicateFull d -> do
