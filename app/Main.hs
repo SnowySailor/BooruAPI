@@ -14,11 +14,9 @@ import Database.Loader
 import Config
 import GHC.Int
 import Data.ByteString.Lazy (ByteString)
-import Control.Lens
 import Network.HTTP.Client as C
 import Network.HTTP.Conduit
 import Network.HTTP.Types.Status
-import Network.HTTP.Client.TLS
 import APIGetter
 
 main :: IO ()
@@ -29,15 +27,15 @@ main = do
     creds    <- getDatabaseCreds
     pool     <- getPool resource (db_database creds)
     sched    <- atomically $ do
-        rq   <- newTBQueue 10
-        rl   <- newTBQueue 80
+        rq   <- newTBQueue $ (*) 2 $ num_request_threads settings
+        rl   <- newTBQueue $ (*) 2 $ num_request_threads settings
         retq <- newTQueue
         out  <- newTQueue
         return $ Scheduler {
             schedRequestQueue = rq,
             schedRetryQueue   = retq,
             schedRateLimiter  = rl,
-            schedReqPerSec    = 0.5,
+            schedReqPerSec    = requests_per_second settings,
             schedOut          = out
         }
     let appSettings = AppSettings {
@@ -50,8 +48,11 @@ main = do
 
     let imageList = map (makeImageRequest settings) [(load_image_start settings)..(load_image_end settings)]
         userList  = map (makeUserRequest settings)  [(load_user_start settings)..(load_user_end settings)]
-    populateImageRequestThread <- forkIO $ addTraverseToTBQueue imageList (schedRequestQueue sched)
-    populateUserRequestThread  <- forkIO $ addTraverseToTBQueue userList (schedRequestQueue sched)
+    iComplete <- atomically $ newTMVar ()
+    uComplete <- atomically $ newTMVar ()
+
+    populateImageRequestThread <- forkIO $ addTraverseToTBQueue imageList (schedRequestQueue sched) iComplete
+    populateUserRequestThread  <- forkIO $ addTraverseToTBQueue userList (schedRequestQueue sched) uComplete
     dripSemThread              <- forkIO $ dripSem sched
     requestThread              <- forkIO $ processTBQueue sched schedRequestQueue processRequest
     retryThread                <- forkIO $ processTQueue sched schedRetryQueue processRequest
@@ -62,7 +63,9 @@ main = do
         empty1 <- isEmptyTBQueue $ schedRequestQueue sched
         empty2 <- isEmptyTQueue  $ schedRetryQueue sched
         empty3 <- isEmptyTQueue  $ schedOut sched
-        unless (all (==True) [empty1, empty2, empty3]) retry
+        empty4 <- isEmptyTMVar   $ iComplete
+        empty5 <- isEmptyTMVar   $ uComplete
+        unless (all (==True) [empty1, empty2, empty3, empty4, empty5]) retry
         return ()
     putStrLn "Running..."
     catch
@@ -77,20 +80,17 @@ main = do
     mapM_ killThread threads
     putStrLn "Completed."
 
--- Trampoleening
+-- Trampolining
     -- tail call recursion
     -- create a queue for its own thread
 
 dripSem :: Scheduler -> IO ()
 dripSem sched = forever $ do
-    atomically $ do
-        writeTBQueue (schedRateLimiter sched) () `orElse` return ()
+    atomically $ writeTBQueue (schedRateLimiter sched) ()
     threadDelay $ (*) 1000000 $ floor $ 1/(schedReqPerSec sched)
 
-succSem :: Scheduler -> IO ()
-succSem sched = do
-    _ <- atomically $ readTBQueue $ schedRateLimiter sched
-    return ()
+rateLimit :: Scheduler -> IO ()
+rateLimit sched = atomically $ readTBQueue $ schedRateLimiter sched
 
 processRequest :: Scheduler -> AppRequest -> IO ()
 processRequest sched req = do
@@ -98,15 +98,17 @@ processRequest sched req = do
         GET -> do
             req     <- parseRequest $ requestUri req
             manager <- newManager tlsManagerSettings
-            _       <- succSem sched
+            rateLimit sched
             resp    <- C.httpLbs req manager
             callback (responseBody resp) (statusCode $ responseStatus resp)
             where callback = requestCallback req
         _ -> undefined
 
 -- Preparing
-addTraverseToTBQueue :: (Traversable t) => t a -> TBQueue a -> IO ()
-addTraverseToTBQueue l q = forM_ l $ \x -> atomically $ writeTBQueue q x
+addTraverseToTBQueue :: (Traversable t) => t a -> TBQueue a -> TMVar b -> IO b
+addTraverseToTBQueue l q c = do
+    forM_ l $ \x -> atomically $ writeTBQueue q x -- Perform the write task
+    atomically $ takeTMVar c -- Notify that we've completed the task
 
 addToTBQueue :: a -> TBQueue a -> IO ()
 addToTBQueue x q = atomically $ writeTBQueue q x
@@ -114,13 +116,13 @@ addToTBQueue x q = atomically $ writeTBQueue q x
 -- Processing
 processTBQueue :: a -> (a -> TBQueue b) -> (a -> b -> IO c) -> IO c
 processTBQueue sched q f = forever $ do
-    toProcess <- atomically $ readTBQueue (q sched)
-    f sched toProcess
+    toProcess <- atomically $ readTBQueue (q sched) -- Get the next value from the queue
+    f sched toProcess -- Process the value and return the result
 
 processTQueue :: a -> (a -> TQueue b) -> (a -> b -> IO c) -> IO c
 processTQueue sched q f = forever $ do
-    toProcess <- atomically $ readTQueue (q sched)
-    f sched toProcess
+    toProcess <- atomically $ readTQueue (q sched) -- Get the next value from the queue
+    f sched toProcess -- Process the value and return the result
 
 
 -- Handling

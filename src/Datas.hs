@@ -134,15 +134,17 @@ data ServerResources = ServerResources {
 }
 
 data Settings = Settings {
-    api_key           :: String,
-    images_per_page   :: Int,
-    comments_per_page :: Int,
-    load_image_start  :: Int,
-    load_image_end    :: Int,
-    load_user_start   :: Int,
-    load_user_end     :: Int,
-    load_full_images  :: Bool,
-    load_full_users   :: Bool
+    api_key             :: String,
+    images_per_page     :: Int,
+    comments_per_page   :: Int,
+    load_image_start    :: Int,
+    load_image_end      :: Int,
+    load_user_start     :: Int,
+    load_user_end       :: Int,
+    load_full_images    :: Bool,
+    load_full_users     :: Bool,
+    num_request_threads :: Int,
+    requests_per_second :: Double
 } deriving (Show)
 
 data AppSettings = AppSettings {
@@ -318,14 +320,16 @@ instance FromJSON Settings where
     parseJSON (Object v) = 
         Settings
             <$> v .:  "key"
-            <*> v .:? "images_per_page"   .!= 50
-            <*> v .:? "comments_per_page" .!= 20
-            <*> v .:? "start_image_id"    .!= 0
-            <*> v .:? "end_image_id"      .!= 0
-            <*> v .:? "start_user_id"     .!= 0
-            <*> v .:? "end_user_id"       .!= 0
-            <*> v .:? "load_full_images"  .!= False
-            <*> v .:? "load_full_users"   .!= False
+            <*> v .:? "images_per_page"     .!= 50
+            <*> v .:? "comments_per_page"   .!= 20
+            <*> v .:? "start_image_id"      .!= 0
+            <*> v .:? "end_image_id"        .!= 0
+            <*> v .:? "start_user_id"       .!= 0
+            <*> v .:? "end_user_id"         .!= 0
+            <*> v .:? "load_full_images"    .!= False
+            <*> v .:? "load_full_users"     .!= False
+            <*> v .:? "num_request_threads" .!= 1
+            <*> v .:? "max_requests_per_second" .!= 4.0
     parseJSON _          = fail "Unable to parse non-Object"
 
 instance FromJSON DatabaseCredentials where

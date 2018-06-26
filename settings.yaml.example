@@ -1,3 +1,11 @@
 - key: 'yourderpibooruAPIkey' # Required.
-  images_per_page: 50 # Not required. 50 is the recommended value. Not fully tested with others.
-  comments_per_page: 20 # Not required. Change this value if the number of comments per page ever changes on the site.
+  images_per_page: 50 # Recommended value. Not fully tested with others.
+  comments_per_page: 20 # Number of comments per comment page API call. Default 20.
+  start_user_id: 1 # User to start at. Default 0.
+  end_user_id: 447824 # User to end at. Default 0. 
+  load_full_users: False # Load users with all of their faves. Default False.
+  start_image_id: 1 # Image to start loading at. Default 0.
+  end_image_id: 1763948 # Image to stop loading at. Default 0.
+  load_full_images: True # Load images with all of their comments. Default False.
+  num_request_threads: 4 # Number of request threads to create. Default 1.
+  max_requests_per_second: 4 # Max number of requests per second. This can be a decimal. Default 4.
