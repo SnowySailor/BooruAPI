@@ -151,20 +151,6 @@ data AppSettings = AppSettings {
     app_db_pool  :: Pool Connection
 }
 
-data Request = Request {
-    requestId         :: Int,
-    requestTries      :: Int,
-    requestRespCodes  :: [Int]
-} deriving (Show)
-
-data Scheduler = Scheduler {
-    schedImageQueue      :: TBQueue Int,
-    schedUserQueue       :: TBQueue Int,
-    schedImageRetryQueue :: TQueue Request,
-    schedUserRetryQueue  :: TQueue Request,
-    schedOut             :: TQueue String
-}
-
 -- Classes
 
 class Nullable a where

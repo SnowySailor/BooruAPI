@@ -13,6 +13,13 @@ import Database.Pool
 import Database.Loader
 import Config
 import GHC.Int
+import Data.ByteString.Lazy (ByteString)
+import Control.Lens
+import Network.HTTP.Client as C
+import Network.HTTP.Conduit
+import Network.HTTP.Types.Status
+import Network.HTTP.Client.TLS
+import APIGetter
 
 main :: IO ()
 main = do
@@ -22,17 +29,16 @@ main = do
     creds    <- getDatabaseCreds
     pool     <- getPool resource (db_database creds)
     sched    <- atomically $ do
-        iq  <- newTBQueue 10
-        uq  <- newTBQueue 10
-        irq <- newTQueue
-        urq <- newTQueue
-        out <- newTQueue
+        rq   <- newTBQueue 10
+        rl   <- newTBQueue 80
+        retq <- newTQueue
+        out  <- newTQueue
         return $ Scheduler {
-            schedImageQueue      = iq,
-            schedUserQueue       = uq,
-            schedImageRetryQueue = irq,
-            schedUserRetryQueue  = urq,
-            schedOut             = out
+            schedRequestQueue = rq,
+            schedRetryQueue   = retq,
+            schedRateLimiter  = rl,
+            schedReqPerSec    = 0.5,
+            schedOut          = out
         }
     let appSettings = AppSettings {
             app_settings = settings,
@@ -42,40 +48,68 @@ main = do
 
     -- Start tasks
 
-    let imageList = [(load_image_start settings)..(load_image_end settings)]
-        userList  = [(load_user_start settings)..(load_user_end settings)]
-    populateImageQueueThread <- forkIO $ addToQueue (schedImageQueue sched) imageList
-    populateUserQueueThread  <- forkIO $ addToQueue (schedUserQueue sched) userList
-    imageThread              <- forkIO $ processTBQueue sched schedImageQueue $ processImage appSettings
-    userThread               <- forkIO $ processTBQueue sched schedUserQueue  $ processUser appSettings
-    imageRetryThread         <- forkIO $ processTQueue sched schedImageRetryQueue $ processImageRetry appSettings
-    userRetryThread          <- forkIO $ processTQueue sched schedUserRetryQueue  $ processUserRetry appSettings
-    outThread                <- forkIO $ processTQueue sched schedOut processOut
+    let imageList = map (makeImageRequest settings) [(load_image_start settings)..(load_image_end settings)]
+        userList  = map (makeUserRequest settings)  [(load_user_start settings)..(load_user_end settings)]
+    populateImageRequestThread <- forkIO $ addTraverseToTBQueue imageList (schedRequestQueue sched)
+    populateUserRequestThread  <- forkIO $ addTraverseToTBQueue userList (schedRequestQueue sched)
+    dripSemThread              <- forkIO $ dripSem sched
+    requestThread              <- forkIO $ processTBQueue sched schedRequestQueue processRequest
+    retryThread                <- forkIO $ processTQueue sched schedRetryQueue processRequest
+    outThread                  <- forkIO $ processTQueue sched schedOut handleOut
+    let threads = [populateImageRequestThread, populateUserRequestThread, requestThread, retryThread, outThread,
+                   dripSemThread]
     waiter <- async $ atomically $ do
-        empty1 <- isEmptyTBQueue $ schedImageQueue sched
-        empty2 <- isEmptyTBQueue $ schedUserQueue sched
-        empty3 <- isEmptyTQueue  $ schedImageRetryQueue sched
-        empty4 <- isEmptyTQueue  $ schedUserRetryQueue sched
-        empty5 <- isEmptyTQueue  $ schedOut sched
-        unless (all (==True) [empty1, empty2, empty3, empty4, empty5]) retry
+        empty1 <- isEmptyTBQueue $ schedRequestQueue sched
+        empty2 <- isEmptyTQueue  $ schedRetryQueue sched
+        empty3 <- isEmptyTQueue  $ schedOut sched
+        unless (all (==True) [empty1, empty2, empty3]) retry
         return ()
     putStrLn "Running..."
     catch
         (wait waiter) -- Wait on all queues to be empty
         (\e -> do
             putStrLn $ show (e :: AsyncException)
-            mapM_ killThread [populateUserQueueThread, populateImageQueueThread, imageThread, userThread, imageRetryThread,
-                              userRetryThread, outThread]
+            mapM_ killThread threads
             putStrLn "Killed threads"
             return ()
         )
     -- Kill all the threads
-    mapM_ killThread [populateUserQueueThread, populateImageQueueThread, imageThread, userThread, imageRetryThread, userRetryThread, outThread]
+    mapM_ killThread threads
     putStrLn "Completed."
 
+-- Trampoleening
+    -- tail call recursion
+    -- create a queue for its own thread
+
+dripSem :: Scheduler -> IO ()
+dripSem sched = forever $ do
+    atomically $ do
+        writeTBQueue (schedRateLimiter sched) () `orElse` return ()
+    threadDelay $ (*) 1000000 $ floor $ 1/(schedReqPerSec sched)
+
+succSem :: Scheduler -> IO ()
+succSem sched = do
+    _ <- atomically $ readTBQueue $ schedRateLimiter sched
+    return ()
+
+processRequest :: Scheduler -> AppRequest -> IO ()
+processRequest sched req = do
+    case requestMethod req of
+        GET -> do
+            req     <- parseRequest $ requestUri req
+            manager <- newManager tlsManagerSettings
+            _       <- succSem sched
+            resp    <- C.httpLbs req manager
+            callback (responseBody resp) (statusCode $ responseStatus resp)
+            where callback = requestCallback req
+        _ -> undefined
+
 -- Preparing
-addToQueue :: (Traversable t) => TBQueue a -> t a -> IO ()
-addToQueue q l = forM_ l $ \x -> atomically $ writeTBQueue q x
+addTraverseToTBQueue :: (Traversable t) => t a -> TBQueue a -> IO ()
+addTraverseToTBQueue l q = forM_ l $ \x -> atomically $ writeTBQueue q x
+
+addToTBQueue :: a -> TBQueue a -> IO ()
+addToTBQueue x q = atomically $ writeTBQueue q x
 
 -- Processing
 processTBQueue :: a -> (a -> TBQueue b) -> (a -> b -> IO c) -> IO c
@@ -88,68 +122,103 @@ processTQueue sched q f = forever $ do
     toProcess <- atomically $ readTQueue (q sched)
     f sched toProcess
 
-processImage :: AppSettings -> Scheduler -> ImageId -> IO ()
-processImage sett sched i = do
-    result <- case load_full_images $ app_settings sett of
-        True  -> handleImageFull sett sched i
-        False -> handleImage sett sched i
-    putStrLn $ show result
 
-processUser :: AppSettings -> Scheduler -> UserId -> IO ()
-processUser sett sched u = do
-    result <- case load_full_users $ app_settings sett of
-        True  -> handleUserFull sett sched u
-        False -> handleUser sett sched u
-    putStrLn $ show result
+-- Handling
+handleOut :: Scheduler -> String -> IO ()
+handleOut _ s = putStrLn s
 
-processImageRetry :: AppSettings -> Scheduler -> Request -> IO ()
-processImageRetry _ _ _ = return ()
+handleImageResponse :: ByteString -> Int -> IO ()
+handleImageResponse bs status = do
+    putStrLn $ "Handling image. Got " ++ show status
 
-processUserRetry :: AppSettings -> Scheduler -> Request -> IO ()
-processUserRetry _ _ _ = return ()
+handleUserResponse :: ByteString -> Int -> IO ()
+handleUserResponse bs status = do
+    putStrLn $ "Handling user. Got " ++ show status
 
-processOut :: Scheduler -> String -> IO ()
-processOut _ s = putStrLn s
+makeImageRequest :: Settings -> ImageId -> AppRequest
+makeImageRequest s i = AppRequest uri Nothing GET handleImageResponse
+    where uri = imageAPI i s
 
--- Doing
-handleUserFull :: AppSettings -> Scheduler -> UserId -> IO (Int64, Int64, Int64, Int64)
-handleUserFull sett sched u = do
-    (user, status) <- getUserFull u (app_settings sett)
-    case status of
-        200 -> withResource (app_db_pool sett) $ \conn -> loadUserFull user conn (db_schema $ app_db_creds sett)
-        _   -> do
-            atomically $ writeTQueue (schedUserRetryQueue sched) $ Request u 0 [status]
-            return (0,0,0,0)
+makeUserRequest :: Settings -> UserId -> AppRequest
+makeUserRequest s u = AppRequest uri Nothing GET handleUserResponse
+    where uri = userAPI u s
 
-handleUser :: AppSettings -> Scheduler -> UserId -> IO (Int64, Int64, Int64, Int64)
-handleUser sett sched u = do
-    (user, status) <- getUser u (app_settings sett)
-    case status of
-        200 -> do
-            (a,b,c) <- withResource (app_db_pool sett) $ \conn -> loadUser user conn (db_schema $ app_db_creds sett)
-            return (a,b,c,0)
-        _   -> do
-            putStrLn $ "Got " ++ show status ++ " from user. Retrying."
-            atomically $ writeTQueue (schedUserRetryQueue sched) $ Request u 0 [status]
-            return (0,0,0,0)
+-- processImage :: AppSettings -> Scheduler -> ImageId -> IO ()
+-- processImage sett sched i = do
+--     result <- case load_full_images $ app_settings sett of
+--         True  -> handleImageFull sett sched i
+--         False -> handleImage sett sched i
+--     putStrLn $ show result
 
-handleImage :: AppSettings -> Scheduler -> ImageId -> IO (Int64, Int64, Int64)
-handleImage sett sched i = do
-    (image, status) <- getImage i (app_settings sett)
-    case status of
-        200 -> do
-            (a,b) <- withResource (app_db_pool sett) $ \conn -> loadImage image conn (db_schema $ app_db_creds sett)
-            return (a,b,0)
-        _   -> do
-            putStrLn $ "Got " ++ show status ++ " from image. Retrying."
-            atomically $ writeTQueue (schedImageRetryQueue sched) $ Request i 0 [status]
-            return (0,0,0)
+-- processUser :: AppSettings -> Scheduler -> UserId -> IO ()
+-- processUser sett sched u = do
+--     result <- case load_full_users $ app_settings sett of
+--         True  -> handleUserFull sett sched u
+--         False -> handleUser sett sched u
+--     putStrLn $ show result
 
-handleImageFull :: AppSettings -> Scheduler -> ImageId -> IO (Int64, Int64, Int64)
-handleImageFull sett sched i = do
-    (image, status) <- getImageFull i (app_settings sett)
-    case status of
-        200 -> withResource (app_db_pool sett) $ \conn -> loadImageFull image conn (db_schema $ app_db_creds sett)
-        _   -> do
-            atomically $ writeTQueue (schedImageRetryQueue sched) $ Request i 0 [status]
-            return (0,0,0)
+-- processImageRetry :: AppSettings -> Scheduler -> AppRequest -> IO ()
+-- processImageRetry _ _ _ = return ()
+
+-- processUserRetry :: AppSettings -> Scheduler -> AppRequest -> IO ()
+-- processUserRetry _ _ _ = return ()
+
+-- -- Doing
+-- handleUserFull :: AppSettings -> Scheduler -> UserId -> IO (Int64, Int64, Int64, Int64)
+-- handleUserFull sett sched u = do
+--     (user, status) <- getUserFull u (app_settings sett)
+--     case status of
+--         200 -> withResource (app_db_pool sett) $ \conn -> loadUserFull user conn (db_schema $ app_db_creds sett)
+--         _   -> do
+--             atomically $ writeTQueue (schedUserRetryQueue sched) $ AppRequest u 0 [status]
+--             return (0,0,0,0)
+
+-- handleUser :: AppSettings -> Scheduler -> UserId -> IO (Int64, Int64, Int64, Int64)
+-- handleUser sett sched u = do
+--     (user, status) <- getUser u (app_settings sett)
+--     case status of
+--         200 -> do
+--             (a,b,c) <- withResource (app_db_pool sett) $ \conn -> loadUser user conn (db_schema $ app_db_creds sett)
+--             return (a,b,c,0)
+--         _   -> do
+--             putStrLn $ "Got " ++ show status ++ " from user. Retrying."
+--             atomically $ writeTQueue (schedUserRetryQueue sched) $ AppRequest u 0 [status]
+--             return (0,0,0,0)
+
+-- handleImage :: AppSettings -> Scheduler -> ImageId -> IO (Int64, Int64, Int64)
+-- handleImage sett sched i = do
+--     (image, status) <- getImage i (app_settings sett)
+--     case status of
+--         200 -> do
+--             (a,b) <- withResource (app_db_pool sett) $ \conn -> loadImage image conn (db_schema $ app_db_creds sett)
+--             return (a,b,0)
+--         _   -> do
+--             putStrLn $ "Got " ++ show status ++ " from image. Retrying."
+--             atomically $ writeTQueue (schedImageRetryQueue sched) $ AppRequest i 0 [status]
+--             return (0,0,0)
+
+-- handleImageFull :: AppSettings -> Scheduler -> ImageId -> IO (Int64, Int64, Int64)
+-- handleImageFull sett sched i = do
+--     (image, status) <- getImageFull i (app_settings sett)
+--     case status of
+--         200 -> withResource (app_db_pool sett) $ \conn -> loadImageFull image conn (db_schema $ app_db_creds sett)
+--         _   -> do
+--             atomically $ writeTQueue (schedImageRetryQueue sched) $ AppRequest i 0 [status]
+--             return (0,0,0)
+
+data HTTPMethod = GET | POST
+
+data AppRequest = AppRequest {
+    requestUri      :: String,
+    requestBody     :: Maybe ByteString,
+    requestMethod   :: HTTPMethod,
+    requestCallback :: ByteString -> Int -> IO ()
+}
+
+data Scheduler = Scheduler {
+    schedRequestQueue :: TBQueue AppRequest,
+    schedRetryQueue   :: TQueue AppRequest,
+    schedRateLimiter  :: TBQueue (),
+    schedReqPerSec    :: Double,
+    schedOut          :: TQueue String
+}
