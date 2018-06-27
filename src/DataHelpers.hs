@@ -1,8 +1,9 @@
-module DataManipulation where
+module DataHelpers where
 
 import Datas
 import Data.ByteString.Lazy (ByteString)
 import Data.Aeson
+import Control.Concurrent.STM
 
 getImageId :: Image -> ImageId
 getImageId (Image i)          = image_id i
@@ -20,6 +21,9 @@ getTagPageTags _           = []
 
 filterNulls :: (Nullable a) => [a] -> [a]
 filterNulls = filter $ not . isnull
+
+writeOut :: (Show a) => AppContext -> a -> IO ()
+writeOut ctx o = atomically $ writeTQueue (schedOut $ app_sched ctx) $ show o
 
 decodeNoMaybe :: (Nullable a, FromJSON a) => ByteString -> a
 decodeNoMaybe s =

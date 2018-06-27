@@ -12,14 +12,10 @@ import Data.Pool
 import Database.Pool
 import Database.Loader
 import Config
-import GHC.Int
 import Data.ByteString.Lazy (ByteString)
-import Network.HTTP.Client as C
-import Network.HTTP.Conduit
-import Network.HTTP.Types.Status
 import APIGetter
 import Processing
-import DataManipulation
+import DataHelpers
 
 main :: IO ()
 main = do
@@ -99,9 +95,6 @@ main = do
     mapM_ killThread threads
     putStrLn "Completed."
 
-writeOut :: (Show a) => AppContext -> a -> IO ()
-writeOut ctx o = atomically $ writeTQueue (schedOut $ app_sched ctx) $ show o
-
 -- Handling
 handleOut :: Scheduler -> String -> IO ()
 handleOut _ s = putStrLn s
@@ -111,7 +104,10 @@ handleImageResponse ctx bs status = do
     addToTQueue ("Handling image. Got " ++ show status) (schedOut $ app_sched ctx)
     when (status >= 200 && status < 300) $ do
         case image of
-            Image i          -> writeOut ctx image
+            Image i          -> do
+                comments <- getImageComments (image_id i) (image_comment_count i) ctx
+                writeOut ctx image
+                writeOut ctx comments
             DuplicateImage i -> writeOut ctx image
             DeletedImage i   -> writeOut ctx image
             NullImage        -> writeOut ctx image

@@ -3,7 +3,7 @@ module DerpAPI where
 import Datas
 import Helpers
 import APIGetter
-import DataManipulation
+import DataHelpers
 import Network.URI.Encode
 import Control.Exception
 import Control.Concurrent.STM
@@ -26,8 +26,8 @@ bsToImage = decodeNoMaybe
 bsToUser :: ByteString -> User
 bsToUser = decodeNoMaybe
 
-getImageCommentsLimited :: ImageId -> Int -> AppContext -> IO [Comment]
-getImageCommentsLimited i count ctx = do
+getImageComments :: ImageId -> Int -> AppContext -> IO [CommentPage]
+getImageComments i count ctx = do
     results      <- atomically $ newTVar []
     let (p, _)      = divMod count $ comments_per_page $ app_sett ctx
         requests    = map (makeCommentPageRequest results (app_sett ctx) i) [1..p]
@@ -46,16 +46,19 @@ getImageCommentsLimited i count ctx = do
     catch
         (wait waiter)
         (\e -> do
-            atomically $ writeTQueue (schedOut $ app_sched ctx) $ show (e :: AsyncException)
+            writeOut ctx (e :: AsyncException)
             mapM_ killThread threads
         )
     mapM_ killThread threads
     atomically $ readTVar results
 
-handleCommentPageResponse' :: TVar [a] -> AppContext -> ByteString -> Int -> IO ()
-handleCommentPageResponse' = undefined
+handleCommentPageResponse' :: TVar [CommentPage] -> AppContext -> ByteString -> Int -> IO ()
+handleCommentPageResponse' t ctx bs s = atomically $ do
+        let page = decodeNoMaybe bs
+        v <- readTVar t
+        writeTVar t $ page:v
 
-makeCommentPageRequest :: TVar [a] -> Settings -> ImageId -> PageNo -> AppRequest
+makeCommentPageRequest :: TVar [CommentPage] -> Settings -> ImageId -> PageNo -> AppRequest
 makeCommentPageRequest t s i p = AppRequest uri Nothing GET $ handleCommentPageResponse' t
     where uri = commentsAPI i p s
 

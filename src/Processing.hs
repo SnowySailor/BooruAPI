@@ -7,12 +7,13 @@ import Control.Concurrent.STM
 import Network.HTTP.Client as C
 import Network.HTTP.Conduit
 import Network.HTTP.Types.Status
-import DataManipulation
+import DataHelpers
 
 -- Trampolining
     -- tail call recursion
     -- create a queue for its own thread
 
+-- Rate limiting
 dripSem :: Scheduler -> IO ()
 dripSem sched = forever $ do
      -- Write that we have a spot open
@@ -23,11 +24,23 @@ dripSem sched = forever $ do
 rateLimit :: Scheduler -> IO ()
 rateLimit sched = atomically $ readTBQueue $ schedRateLimiter sched
 
--- Preparing
+-- Adding to queues
 addTraverseToTBQueue :: (Traversable t) => t a -> TBQueue a -> TMVar b -> IO b
 addTraverseToTBQueue l q c = do
     -- Perform the write task
     forM_ l $ \x -> atomically $ writeTBQueue q x
+    -- Notify that we've completed the task
+    atomically $ takeTMVar c
+
+addTraverseToTBQueueSync :: (Traversable t) => t a -> TBQueue a -> IO ()
+addTraverseToTBQueueSync l q = do
+    -- Perform the write task
+    forM_ l $ \x -> atomically $ writeTBQueue q x
+
+addTraverseToTQueue :: (Traversable t) => t a -> TQueue a -> TMVar b -> IO b
+addTraverseToTQueue l q c = do
+    -- Perform the write task
+    forM_ l $ \x -> atomically $ writeTQueue q x
     -- Notify that we've completed the task
     atomically $ takeTMVar c
 
@@ -42,7 +55,8 @@ addToTBQueue x q = atomically $ writeTBQueue q x
 addToTQueue :: a -> TQueue a -> IO ()
 addToTQueue x q = atomically $ writeTQueue q x
 
--- Processing
+
+-- Processing queues
 processTBQueue :: a -> (a -> TBQueue b) -> (a -> b -> IO c) -> IO c
 processTBQueue sched q f = forever $ do
      -- Get the next value from the queue
@@ -57,6 +71,8 @@ processTQueue sched q f = forever $ do
      -- Process the value and return the result
     f sched toProcess
 
+
+-- Processing AppRequests
 processRequest :: AppContext -> AppRequest -> IO ()
 processRequest ctx req = do
     case requestMethod req of
@@ -67,4 +83,4 @@ processRequest ctx req = do
             resp    <- C.httpLbs pReq manager
             callback ctx (responseBody resp) (statusCode $ responseStatus resp)
             where callback = requestCallback req
-        _ -> undefined
+        _ -> undefined -- TODO: Handle other methods
