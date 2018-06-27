@@ -18,6 +18,8 @@ import Network.HTTP.Client as C
 import Network.HTTP.Conduit
 import Network.HTTP.Types.Status
 import APIGetter
+import Processing
+import DataManipulation
 
 main :: IO ()
 main = do
@@ -97,60 +99,8 @@ main = do
     mapM_ killThread threads
     putStrLn "Completed."
 
--- Trampolining
-    -- tail call recursion
-    -- create a queue for its own thread
-
-dripSem :: Scheduler -> IO ()
-dripSem sched = forever $ do
-     -- Write that we have a spot open
-    atomically $ writeTBQueue (schedRateLimiter sched) ()
-     -- Wait a certin amount of time before opening a new spot
-    threadDelay $ (*) 1000000 $ floor $ 1/(schedReqPerSec sched)
-
-rateLimit :: Scheduler -> IO ()
-rateLimit sched = atomically $ readTBQueue $ schedRateLimiter sched
-
--- Preparing
---addTraverseToTBQueue :: (Traversable t) => t a -> TBQueue a -> TMVar b -> IO b
-addTraverseToTBQueue l q c = do
-     -- Perform the write task
-    forM_ l $ \x -> atomically $ writeTBQueue q x
-     -- Notify that we've completed the task
-    atomically $ takeTMVar c
-
-addToTBQueue :: a -> TBQueue a -> IO ()
-addToTBQueue x q = atomically $ writeTBQueue q x
-
-addToTQueue :: a -> TQueue a -> IO ()
-addToTQueue x q = atomically $ writeTQueue q x
-
--- Processing
-processTBQueue :: a -> (a -> TBQueue b) -> (a -> b -> IO c) -> IO c
-processTBQueue sched q f = forever $ do
-     -- Get the next value from the queue
-    toProcess <- atomically $ readTBQueue (q sched)
-     -- Process the value and return the result
-    f sched toProcess
-
-processTQueue :: a -> (a -> TQueue b) -> (a -> b -> IO c) -> IO c
-processTQueue sched q f = forever $ do
-     -- Get the next value from the queue
-    toProcess <- atomically $ readTQueue (q sched)
-     -- Process the value and return the result
-    f sched toProcess
-
-processRequest :: AppContext -> AppRequest -> IO ()
-processRequest ctx req = do
-    case requestMethod req of
-        GET -> do
-            pReq    <- parseRequest $ requestUri req
-            manager <- newManager tlsManagerSettings
-            rateLimit $ app_sched ctx
-            resp    <- C.httpLbs pReq manager
-            callback ctx (responseBody resp) (statusCode $ responseStatus resp)
-            where callback = requestCallback req
-        _ -> undefined
+writeOut :: (Show a) => AppContext -> a -> IO ()
+writeOut ctx o = atomically $ writeTQueue (schedOut $ app_sched ctx) $ show o
 
 -- Handling
 handleOut :: Scheduler -> String -> IO ()
@@ -159,21 +109,29 @@ handleOut _ s = putStrLn s
 handleImageResponse :: AppContext -> ByteString -> Int -> IO ()
 handleImageResponse ctx bs status = do
     addToTQueue ("Handling image. Got " ++ show status) (schedOut $ app_sched ctx)
-    -- case image of
-    --     Image -> undefined
-    --     DuplicateImage -> undefined
-    --     DeletedImage -> undefined
-    --     NullImage -> undefined
-    -- where image = decodeNoMaybe bs
+    when (status >= 200 && status < 300) $ do
+        case image of
+            Image i          -> writeOut ctx image
+            DuplicateImage i -> writeOut ctx image
+            DeletedImage i   -> writeOut ctx image
+            NullImage        -> writeOut ctx image
+        where image = decodeNoMaybe bs
+    --when (status >= 300 && status < 400) $ putStrLn "Redirected"
+    --when (status >= 400 && status < 500) $ putStrLn "Client error"
+    --when (status >= 500 && status < 600) $ putStrLn "Server error"
 
 handleUserResponse :: AppContext -> ByteString -> Int -> IO ()
 handleUserResponse ctx bs status = do
     addToTQueue ("Handling user. Got " ++ show status) (schedOut $ app_sched ctx)
-    -- case user of
-    --     User -> undefined
-    --     NullUser -> undefined
-    --     _ -> undefined
-    -- where user = decodeNoMaybe bs
+    when (status >= 200 && status < 300) $ do
+        case user of
+            User{}   -> writeOut ctx user
+            NullUser -> writeOut ctx user
+            _        -> writeOut ctx "Uh oh"
+        where user = decodeNoMaybe bs
+    -- when (status >= 300 && status < 400) $ putStrLn "Redirected"
+    -- when (status >= 400 && status < 500) $ putStrLn "Client error"
+    -- when (status >= 500 && status < 600) $ putStrLn "Server error"
 
 handleTagPageResponse :: AppContext -> ByteString -> Int -> IO ()
 handleTagPageResponse ctx bs status = do

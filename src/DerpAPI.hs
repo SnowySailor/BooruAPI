@@ -1,23 +1,17 @@
-module DerpAPI 
-    (
-        getImage,
-        getImageFull,
-        getImageComments,
-        getCommentPage,
-        getUserByName,
-        getUser,
-        getUserFull,
-        getUserFavorites,
-        getUserFavoritesById,
-        getUserFavoritesByName,
-        getAllTags
-    ) where
+module DerpAPI where
 
 import Datas
 import Helpers
 import APIGetter
 import DataManipulation
 import Network.URI.Encode
+import Control.Exception
+import Control.Concurrent.STM
+import Data.ByteString.Lazy (ByteString)
+import Control.Concurrent.Async
+import Control.Concurrent
+import Control.Monad
+import Processing
 
 -- Images
 
@@ -26,28 +20,47 @@ getImage i s = do
     (imageData, status) <- getImageJSON i s
     return (decodeNoMaybe imageData, status)
 
-getImageFull :: ImageId -> Settings -> IO (ImageFull, Int)
-getImageFull i s = do
-    (image, status) <- getImage i s
-    comments  <- case image of
-        Image NullImageData -> return []
-        Image d             -> if (image_comment_count d) > 0 then
-                                    getImageComments (image_id d) (image_comment_count d) s
-                                else
-                                    return []
-        _                   -> return []
-    let imageFull = case image of
-                        Image NullImageData              -> ImageFull NullImageData comments
-                        Image d                          -> ImageFull d comments
-                        ImageDuplicate NullDuplicateData -> ImageDuplicateFull NullDuplicateData
-                        ImageDuplicate d                 -> ImageDuplicateFull d
-                        ImageDeleted NullDeletedData     -> ImageDeletedFull NullDeletedData
-                        ImageDeleted d                   -> ImageDeletedFull d
-                        NullImage                        -> NullImageFull
-    return (imageFull, status)
+bsToImage :: ByteString -> Image
+bsToImage = decodeNoMaybe
 
-getImageComments :: ImageId -> Int -> Settings -> IO [Comment]
-getImageComments i count s = do
+bsToUser :: ByteString -> User
+bsToUser = decodeNoMaybe
+
+getImageCommentsLimited :: ImageId -> Int -> AppContext -> IO [Comment]
+getImageCommentsLimited i count ctx = do
+    results      <- atomically $ newTVar []
+    let (p, _)      = divMod count $ comments_per_page $ app_sett ctx
+        requests    = map (makeCommentPageRequest results (app_sett ctx) i) [1..p]
+        threadCount = num_request_threads $ app_sett ctx
+    requestQueue <- atomically $ newTQueue
+    retryQueue   <- atomically $ newTQueue
+    addTraverseToTQueueSync requests requestQueue
+    requestThreads <- replicateM threadCount $ forkIO $ processTQueue ctx (\_ -> requestQueue) $ processRequest 
+    retryThreads   <- replicateM threadCount $ forkIO $ processTQueue ctx (\_ -> retryQueue) $ processRequest
+    let threads = requestThreads ++ retryThreads
+    waiter <- async $ atomically $ do
+        empty1 <- isEmptyTQueue requestQueue
+        empty2 <- isEmptyTQueue retryQueue
+        unless (all (==True) [empty1, empty2]) retry
+        return ()
+    catch
+        (wait waiter)
+        (\e -> do
+            atomically $ writeTQueue (schedOut $ app_sched ctx) $ show (e :: AsyncException)
+            mapM_ killThread threads
+        )
+    mapM_ killThread threads
+    atomically $ readTVar results
+
+handleCommentPageResponse' :: TVar [a] -> AppContext -> ByteString -> Int -> IO ()
+handleCommentPageResponse' = undefined
+
+makeCommentPageRequest :: TVar [a] -> Settings -> ImageId -> PageNo -> AppRequest
+makeCommentPageRequest t s i p = AppRequest uri Nothing GET $ handleCommentPageResponse' t
+    where uri = commentsAPI i p s
+
+getImageCommentsSimple :: ImageId -> Int -> Settings -> IO [Comment]
+getImageCommentsSimple i count s = do
     let (p, _) = divMod count $ comments_per_page s
     comments <- mapM (\x -> getCommentPage i x s) [1..(p+1)]
     return . flatten . map (\(CommentPage c) -> c) $ filterNulls $ map fst comments
@@ -66,30 +79,10 @@ getUser i s = do
     (json, status) <- getUserJSON i s
     return $ (decodeNoMaybe json, status)
 
-getUserFull :: (Print a) => a -> Settings -> IO (UserFull, Int)
-getUserFull i s = do
-    (json, status) <- getUserJSON i s
-    let user_data = decodeNoMaybe json
-    faves <- case user_data of
-        NullUserData -> return []
-        UserData{}   -> getUserFavorites (user_name user_data) s
-    return $ (UserFull user_data faves, status)
-
 getUserByName :: Username -> Settings -> IO (User, Int)
 getUserByName n s = do
     (json, status) <- getUserJSON (encode n) s
     return $ (decodeNoMaybe json, status)
-
-getUserFavoritesById :: UserId -> Settings -> IO [ImageId]
-getUserFavoritesById i s = do
-    (user, status) <- getUser i s
-    case user of
-        User NullUserData -> return []
-        User d            -> getUserFavorites (user_name d) s
-        _                 -> return []
-
-getUserFavoritesByName :: Username -> Settings -> IO [ImageId]
-getUserFavoritesByName u s = getUserFavorites u s
 
 getUserFavorites :: Username -> Settings -> IO [ImageId]
 getUserFavorites u s = do
