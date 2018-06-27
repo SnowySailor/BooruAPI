@@ -21,52 +21,69 @@ import APIGetter
 
 main :: IO ()
 main = do
-    -- Setup
-    resource <- defaultResources
+    -- START SETUP --
+    -- Get config file data
     settings <- getSettings
     creds    <- getDatabaseCreds
+
+    -- Start the connection pool
+    resource <- defaultResources
     pool     <- getPool resource (db_database creds)
+
+    -- Create a scheduler and app context
     sched    <- atomically $ do
         rq   <- newTBQueue $ (*) 2 $ num_request_threads settings
         rl   <- newTBQueue $ (*) 2 $ num_request_threads settings
         retq <- newTQueue
         out  <- newTQueue
-        return $ Scheduler {
+        return Scheduler {
             schedRequestQueue = rq,
             schedRetryQueue   = retq,
             schedRateLimiter  = rl,
             schedReqPerSec    = requests_per_second settings,
             schedOut          = out
         }
-    let appSettings = AppSettings {
-            app_settings = settings,
-            app_db_creds = creds,
-            app_db_pool  = pool
-        }
+    let ctx = AppContext {
+        app_sett      = settings,
+        app_sched     = sched,
+        app_db_creds  = creds,
+        app_db_pool   = pool
+    }
 
-    -- Start tasks
-
+    -- Create necessary data
     let imageList = map (makeImageRequest settings) [(load_image_start settings)..(load_image_end settings)]
         userList  = map (makeUserRequest settings)  [(load_user_start settings)..(load_user_end settings)]
+        threadNum = num_request_threads settings
+
+    -- START TASKS --
+
+    -- Flags for when image/user queuing is complete
     iComplete <- atomically $ newTMVar ()
     uComplete <- atomically $ newTMVar ()
-
+    -- Start all necessary threads
     populateImageRequestThread <- forkIO $ addTraverseToTBQueue imageList (schedRequestQueue sched) iComplete
     populateUserRequestThread  <- forkIO $ addTraverseToTBQueue userList (schedRequestQueue sched) uComplete
     dripSemThread              <- forkIO $ dripSem sched
-    requestThread              <- forkIO $ processTBQueue sched schedRequestQueue processRequest
-    retryThread                <- forkIO $ processTQueue sched schedRetryQueue processRequest
+    requestThreads             <- replicateM threadNum $ forkIO $ processTBQueue ctx (schedRequestQueue . app_sched) processRequest
+    retryThreads               <- replicateM threadNum $ forkIO $ processTQueue ctx (schedRetryQueue . app_sched) processRequest
     outThread                  <- forkIO $ processTQueue sched schedOut handleOut
-    let threads = [populateImageRequestThread, populateUserRequestThread, requestThread, retryThread, outThread,
-                   dripSemThread]
+
+    -- END START TASKS --
+
+    let threads = [populateImageRequestThread, populateUserRequestThread, outThread,
+                   dripSemThread] ++ requestThreads ++ retryThreads
+
+    -- Create async waiter
     waiter <- async $ atomically $ do
         empty1 <- isEmptyTBQueue $ schedRequestQueue sched
         empty2 <- isEmptyTQueue  $ schedRetryQueue sched
         empty3 <- isEmptyTQueue  $ schedOut sched
         empty4 <- isEmptyTMVar   $ iComplete
         empty5 <- isEmptyTMVar   $ uComplete
+        -- If all are empty, then the run is complete
         unless (all (==True) [empty1, empty2, empty3, empty4, empty5]) retry
         return ()
+
     putStrLn "Running..."
     catch
         (wait waiter) -- Wait on all queues to be empty
@@ -86,56 +103,90 @@ main = do
 
 dripSem :: Scheduler -> IO ()
 dripSem sched = forever $ do
+     -- Write that we have a spot open
     atomically $ writeTBQueue (schedRateLimiter sched) ()
+     -- Wait a certin amount of time before opening a new spot
     threadDelay $ (*) 1000000 $ floor $ 1/(schedReqPerSec sched)
 
 rateLimit :: Scheduler -> IO ()
 rateLimit sched = atomically $ readTBQueue $ schedRateLimiter sched
 
-processRequest :: Scheduler -> AppRequest -> IO ()
-processRequest sched req = do
-    case requestMethod req of
-        GET -> do
-            req     <- parseRequest $ requestUri req
-            manager <- newManager tlsManagerSettings
-            rateLimit sched
-            resp    <- C.httpLbs req manager
-            callback (responseBody resp) (statusCode $ responseStatus resp)
-            where callback = requestCallback req
-        _ -> undefined
-
 -- Preparing
-addTraverseToTBQueue :: (Traversable t) => t a -> TBQueue a -> TMVar b -> IO b
+--addTraverseToTBQueue :: (Traversable t) => t a -> TBQueue a -> TMVar b -> IO b
 addTraverseToTBQueue l q c = do
-    forM_ l $ \x -> atomically $ writeTBQueue q x -- Perform the write task
-    atomically $ takeTMVar c -- Notify that we've completed the task
+     -- Perform the write task
+    forM_ l $ \x -> atomically $ writeTBQueue q x
+     -- Notify that we've completed the task
+    atomically $ takeTMVar c
 
 addToTBQueue :: a -> TBQueue a -> IO ()
 addToTBQueue x q = atomically $ writeTBQueue q x
 
+addToTQueue :: a -> TQueue a -> IO ()
+addToTQueue x q = atomically $ writeTQueue q x
+
 -- Processing
 processTBQueue :: a -> (a -> TBQueue b) -> (a -> b -> IO c) -> IO c
 processTBQueue sched q f = forever $ do
-    toProcess <- atomically $ readTBQueue (q sched) -- Get the next value from the queue
-    f sched toProcess -- Process the value and return the result
+     -- Get the next value from the queue
+    toProcess <- atomically $ readTBQueue (q sched)
+     -- Process the value and return the result
+    f sched toProcess
 
 processTQueue :: a -> (a -> TQueue b) -> (a -> b -> IO c) -> IO c
 processTQueue sched q f = forever $ do
-    toProcess <- atomically $ readTQueue (q sched) -- Get the next value from the queue
-    f sched toProcess -- Process the value and return the result
+     -- Get the next value from the queue
+    toProcess <- atomically $ readTQueue (q sched)
+     -- Process the value and return the result
+    f sched toProcess
 
+processRequest :: AppContext -> AppRequest -> IO ()
+processRequest ctx req = do
+    case requestMethod req of
+        GET -> do
+            pReq    <- parseRequest $ requestUri req
+            manager <- newManager tlsManagerSettings
+            rateLimit $ app_sched ctx
+            resp    <- C.httpLbs pReq manager
+            callback ctx (responseBody resp) (statusCode $ responseStatus resp)
+            where callback = requestCallback req
+        _ -> undefined
 
 -- Handling
 handleOut :: Scheduler -> String -> IO ()
 handleOut _ s = putStrLn s
 
-handleImageResponse :: ByteString -> Int -> IO ()
-handleImageResponse bs status = do
-    putStrLn $ "Handling image. Got " ++ show status
+handleImageResponse :: AppContext -> ByteString -> Int -> IO ()
+handleImageResponse ctx bs status = do
+    addToTQueue ("Handling image. Got " ++ show status) (schedOut $ app_sched ctx)
+    -- case image of
+    --     Image -> undefined
+    --     DuplicateImage -> undefined
+    --     DeletedImage -> undefined
+    --     NullImage -> undefined
+    -- where image = decodeNoMaybe bs
 
-handleUserResponse :: ByteString -> Int -> IO ()
-handleUserResponse bs status = do
-    putStrLn $ "Handling user. Got " ++ show status
+handleUserResponse :: AppContext -> ByteString -> Int -> IO ()
+handleUserResponse ctx bs status = do
+    addToTQueue ("Handling user. Got " ++ show status) (schedOut $ app_sched ctx)
+    -- case user of
+    --     User -> undefined
+    --     NullUser -> undefined
+    --     _ -> undefined
+    -- where user = decodeNoMaybe bs
+
+handleTagPageResponse :: AppContext -> ByteString -> Int -> IO ()
+handleTagPageResponse ctx bs status = do
+    addToTQueue ("Handling tag page. Got " ++ show status) (schedOut $ app_sched ctx)
+
+handleCommentPageResponse :: AppContext -> ByteString -> Int -> IO ()
+handleCommentPageResponse ctx bs status = do
+    addToTQueue ("Handling comment page. Got " ++ show status) (schedOut $ app_sched ctx)
+
+handleSearchPageResponse :: AppContext -> ByteString -> Int -> IO ()
+handleSearchPageResponse ctx bs status = do
+    addToTQueue ("Handling search page. Got " ++ show status) (schedOut $ app_sched ctx)
+
 
 makeImageRequest :: Settings -> ImageId -> AppRequest
 makeImageRequest s i = AppRequest uri Nothing GET handleImageResponse
@@ -145,39 +196,51 @@ makeUserRequest :: Settings -> UserId -> AppRequest
 makeUserRequest s u = AppRequest uri Nothing GET handleUserResponse
     where uri = userAPI u s
 
--- processImage :: AppSettings -> Scheduler -> ImageId -> IO ()
+makeTagPageRequest :: Settings -> PageNo -> AppRequest
+makeTagPageRequest s p = AppRequest uri Nothing GET handleTagPageResponse
+    where uri = tagsAPI p s
+
+makeCommentPageRequest :: Settings -> ImageId -> PageNo -> AppRequest
+makeCommentPageRequest s i p = AppRequest uri Nothing GET handleCommentPageResponse
+    where uri = commentsAPI i p s
+
+makeSearchPageRequest :: Settings -> String -> PageNo -> AppRequest
+makeSearchPageRequest s q p = AppRequest uri Nothing GET handleSearchPageResponse
+    where uri = searchAPI q p s
+
+-- processImage :: AppContext -> Scheduler -> ImageId -> IO ()
 -- processImage sett sched i = do
---     result <- case load_full_images $ app_settings sett of
+--     result <- case load_full_images $ app_sett sett of
 --         True  -> handleImageFull sett sched i
 --         False -> handleImage sett sched i
 --     putStrLn $ show result
 
--- processUser :: AppSettings -> Scheduler -> UserId -> IO ()
+-- processUser :: AppContext -> Scheduler -> UserId -> IO ()
 -- processUser sett sched u = do
---     result <- case load_full_users $ app_settings sett of
+--     result <- case load_full_users $ app_sett sett of
 --         True  -> handleUserFull sett sched u
 --         False -> handleUser sett sched u
 --     putStrLn $ show result
 
--- processImageRetry :: AppSettings -> Scheduler -> AppRequest -> IO ()
+-- processImageRetry :: AppContext -> Scheduler -> AppRequest -> IO ()
 -- processImageRetry _ _ _ = return ()
 
--- processUserRetry :: AppSettings -> Scheduler -> AppRequest -> IO ()
+-- processUserRetry :: AppContext -> Scheduler -> AppRequest -> IO ()
 -- processUserRetry _ _ _ = return ()
 
 -- -- Doing
--- handleUserFull :: AppSettings -> Scheduler -> UserId -> IO (Int64, Int64, Int64, Int64)
+-- handleUserFull :: AppContext -> Scheduler -> UserId -> IO (Int64, Int64, Int64, Int64)
 -- handleUserFull sett sched u = do
---     (user, status) <- getUserFull u (app_settings sett)
+--     (user, status) <- getUserFull u (app_sett sett)
 --     case status of
 --         200 -> withResource (app_db_pool sett) $ \conn -> loadUserFull user conn (db_schema $ app_db_creds sett)
 --         _   -> do
 --             atomically $ writeTQueue (schedUserRetryQueue sched) $ AppRequest u 0 [status]
 --             return (0,0,0,0)
 
--- handleUser :: AppSettings -> Scheduler -> UserId -> IO (Int64, Int64, Int64, Int64)
+-- handleUser :: AppContext -> Scheduler -> UserId -> IO (Int64, Int64, Int64, Int64)
 -- handleUser sett sched u = do
---     (user, status) <- getUser u (app_settings sett)
+--     (user, status) <- getUser u (app_sett sett)
 --     case status of
 --         200 -> do
 --             (a,b,c) <- withResource (app_db_pool sett) $ \conn -> loadUser user conn (db_schema $ app_db_creds sett)
@@ -187,9 +250,9 @@ makeUserRequest s u = AppRequest uri Nothing GET handleUserResponse
 --             atomically $ writeTQueue (schedUserRetryQueue sched) $ AppRequest u 0 [status]
 --             return (0,0,0,0)
 
--- handleImage :: AppSettings -> Scheduler -> ImageId -> IO (Int64, Int64, Int64)
+-- handleImage :: AppContext -> Scheduler -> ImageId -> IO (Int64, Int64, Int64)
 -- handleImage sett sched i = do
---     (image, status) <- getImage i (app_settings sett)
+--     (image, status) <- getImage i (app_sett sett)
 --     case status of
 --         200 -> do
 --             (a,b) <- withResource (app_db_pool sett) $ \conn -> loadImage image conn (db_schema $ app_db_creds sett)
@@ -199,28 +262,11 @@ makeUserRequest s u = AppRequest uri Nothing GET handleUserResponse
 --             atomically $ writeTQueue (schedImageRetryQueue sched) $ AppRequest i 0 [status]
 --             return (0,0,0)
 
--- handleImageFull :: AppSettings -> Scheduler -> ImageId -> IO (Int64, Int64, Int64)
+-- handleImageFull :: AppContext -> Scheduler -> ImageId -> IO (Int64, Int64, Int64)
 -- handleImageFull sett sched i = do
---     (image, status) <- getImageFull i (app_settings sett)
+--     (image, status) <- getImageFull i (app_sett sett)
 --     case status of
 --         200 -> withResource (app_db_pool sett) $ \conn -> loadImageFull image conn (db_schema $ app_db_creds sett)
 --         _   -> do
 --             atomically $ writeTQueue (schedImageRetryQueue sched) $ AppRequest i 0 [status]
 --             return (0,0,0)
-
-data HTTPMethod = GET | POST
-
-data AppRequest = AppRequest {
-    requestUri      :: String,
-    requestBody     :: Maybe ByteString,
-    requestMethod   :: HTTPMethod,
-    requestCallback :: ByteString -> Int -> IO ()
-}
-
-data Scheduler = Scheduler {
-    schedRequestQueue :: TBQueue AppRequest,
-    schedRetryQueue   :: TQueue AppRequest,
-    schedRateLimiter  :: TBQueue (),
-    schedReqPerSec    :: Double,
-    schedOut          :: TQueue String
-}

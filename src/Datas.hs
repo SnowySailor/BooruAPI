@@ -12,6 +12,7 @@ import Data.Pool
 import Data.Aeson
 import Data.Time.Clock
 import Data.Attoparsec.ByteString
+import Data.ByteString.Lazy (ByteString)
 import GHC.Word
 
 -- Types
@@ -33,6 +34,7 @@ data Image       = Image ImageData | ImageDuplicate DuplicateData | ImageDeleted
 data ImageFull   = ImageFull ImageData [Comment] | ImageDuplicateFull DuplicateData | ImageDeletedFull DeletedData | NullImageFull deriving (Show)
 data User        = User UserData | AnonymousUser | NullUser deriving (Show)
 data UserFull    = UserFull UserData [ImageId] | AnonymousUserFull | NullUserFull deriving (Show)
+data HTTPMethod  = GET | POST deriving (Show)
 
 data ImageData = ImageData {
     image_id            :: ImageId   ,
@@ -147,8 +149,24 @@ data Settings = Settings {
     requests_per_second :: Double
 } deriving (Show)
 
-data AppSettings = AppSettings {
-    app_settings :: Settings,
+data AppRequest = AppRequest {
+    requestUri      :: String,
+    requestBody     :: Maybe ByteString,
+    requestMethod   :: HTTPMethod,
+    requestCallback :: AppContext -> ByteString -> Int -> IO ()
+}
+
+data Scheduler = Scheduler {
+    schedRequestQueue :: TBQueue AppRequest,
+    schedRetryQueue   :: TQueue AppRequest,
+    schedRateLimiter  :: TBQueue (),
+    schedReqPerSec    :: Double,
+    schedOut          :: TQueue String
+}
+
+data AppContext = AppContext {
+    app_sett     :: Settings,
+    app_sched    :: Scheduler,
     app_db_creds :: DatabaseCredentials,
     app_db_pool  :: Pool Connection
 }
