@@ -20,23 +20,44 @@ getImage i s = do
     (imageData, status) <- getImageJSON i s
     return (decodeNoMaybe imageData, status)
 
-bsToImage :: ByteString -> Image
-bsToImage = decodeNoMaybe
-
-bsToUser :: ByteString -> User
-bsToUser = decodeNoMaybe
-
 getImageComments :: ImageId -> Int -> AppContext -> IO [CommentPage]
 getImageComments i count ctx = do
+    let (p, _) = divMod count $ comments_per_page $ app_sett ctx
+    getNestedRequests (\x y -> makeCommentPageRequest x y i) [1..p] ctx
+    -- results      <- atomically $ newTVar []
+    -- let (p, _)      = divMod count $ comments_per_page $ app_sett ctx
+    --     requests    = map (makeCommentPageRequest results (app_sett ctx) i) [1..p]
+    --     threadCount = num_request_threads $ app_sett ctx
+    -- requestQueue <- atomically $ newTQueue
+    -- retryQueue   <- atomically $ newTQueue
+    -- addTraverseToTQueueSync requests requestQueue
+    -- requestThreads <- replicateM threadCount $ forkIO $ processTQueueRetry ctx (\_ -> requestQueue) (processRequest) retryQueue
+    -- retryThreads   <- replicateM threadCount $ forkIO $ processTQueueRetry ctx (\_ -> retryQueue) (processRequest) retryQueue
+    -- let threads = requestThreads ++ retryThreads
+    -- waiter <- async $ atomically $ do
+    --     empty1 <- isEmptyTQueue requestQueue
+    --     empty2 <- isEmptyTQueue retryQueue
+    --     unless (all (==True) [empty1, empty2]) retry
+    --     return ()
+    -- catch
+    --     (wait waiter)
+    --     (\e -> do
+    --         writeOut ctx (e :: AsyncException)
+    --         mapM_ killThread threads
+    --     )
+    -- mapM_ killThread threads
+    -- atomically $ readTVar results
+
+getNestedRequests :: (TVar [a] -> Settings -> c -> AppRequest) -> [c] -> AppContext -> IO [a]
+getNestedRequests makeRequest applyList ctx = do
     results      <- atomically $ newTVar []
-    let (p, _)      = divMod count $ comments_per_page $ app_sett ctx
-        requests    = map (makeCommentPageRequest results (app_sett ctx) i) [1..p]
+    let requests    = map (makeRequest results (app_sett ctx)) applyList
         threadCount = num_request_threads $ app_sett ctx
     requestQueue <- atomically $ newTQueue
     retryQueue   <- atomically $ newTQueue
     addTraverseToTQueueSync requests requestQueue
-    requestThreads <- replicateM threadCount $ forkIO $ processTQueue ctx (\_ -> requestQueue) $ processRequest 
-    retryThreads   <- replicateM threadCount $ forkIO $ processTQueue ctx (\_ -> retryQueue) $ processRequest
+    requestThreads <- replicateM threadCount $ forkIO $ processTQueueRetry ctx (\_ -> requestQueue) (processRequest) retryQueue
+    retryThreads   <- replicateM threadCount $ forkIO $ processTQueueRetry ctx (\_ -> retryQueue) (processRequest) retryQueue
     let threads = requestThreads ++ retryThreads
     waiter <- async $ atomically $ do
         empty1 <- isEmptyTQueue requestQueue
@@ -52,14 +73,21 @@ getImageComments i count ctx = do
     mapM_ killThread threads
     atomically $ readTVar results
 
-handleCommentPageResponse' :: TVar [CommentPage] -> AppContext -> ByteString -> Int -> IO ()
-handleCommentPageResponse' t ctx bs s = atomically $ do
-        let page = decodeNoMaybe bs
-        v <- readTVar t
-        writeTVar t $ page:v
+handleCommentPageResponse' :: TVar [CommentPage] -> AppContext -> AppRequest -> Maybe (TQueue AppRequest) -> ByteString -> Int -> IO ()
+handleCommentPageResponse' t ctx req retry bs s = 
+    if s >= 200 && s < 300 then do
+        atomically $ do
+            let page = decodeNoMaybe bs
+            v <- readTVar t
+            writeTVar t $ page:v
+    else do
+        case retry of
+            Just a -> addToTQueue (incReqeust req s) a
+            Nothing -> return ()
+
 
 makeCommentPageRequest :: TVar [CommentPage] -> Settings -> ImageId -> PageNo -> AppRequest
-makeCommentPageRequest t s i p = AppRequest uri Nothing GET $ handleCommentPageResponse' t
+makeCommentPageRequest t s i p = AppRequest uri Nothing GET 0 [] $ handleCommentPageResponse' t
     where uri = commentsAPI i p s
 
 getImageCommentsSimple :: ImageId -> Int -> Settings -> IO [Comment]
@@ -87,8 +115,8 @@ getUserByName n s = do
     (json, status) <- getUserJSON (encode n) s
     return $ (decodeNoMaybe json, status)
 
-getUserFavorites :: Username -> Settings -> IO [ImageId]
-getUserFavorites u s = do
+getUserFavoritesSimple :: Username -> Settings -> IO [ImageId]
+getUserFavoritesSimple u s = do
     (firstPage, status)  <- getSearchPage q 1 s
     totalCount <- return $ case firstPage of
         NullSearchPage -> 0
@@ -100,8 +128,8 @@ getUserFavorites u s = do
 
 -- Tags
 
-getAllTags :: PageNo -> Settings -> IO [Tag]
-getAllTags maxPage s = do
+getAllTagsSimple :: PageNo -> Settings -> IO [Tag]
+getAllTagsSimple maxPage s = do
     tagPages <- mapM (\x -> getTagPage x s) [1..maxPage]
     return . filterNulls . flatten $ map getTagPageTags $ map fst tagPages
 

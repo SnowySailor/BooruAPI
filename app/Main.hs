@@ -64,7 +64,7 @@ main = do
     dripSemThread              <- forkIO $ dripSem sched
     requestThreads             <- replicateM threadNum $ forkIO $ processTBQueue ctx (schedRequestQueue . app_sched) processRequest
     retryThreads               <- replicateM threadNum $ forkIO $ processTQueue ctx (schedRetryQueue . app_sched) processRequest
-    outThread                  <- forkIO $ processTQueue sched schedOut handleOut
+    outThread                  <- forkIO $ processTQueue ctx (schedOut . app_sched) handleOut
 
     -- END START TASKS --
 
@@ -96,70 +96,92 @@ main = do
     putStrLn "Completed."
 
 -- Handling
-handleOut :: Scheduler -> String -> IO ()
-handleOut _ s = putStrLn s
+handleOut :: AppContext -> String -> Maybe (TQueue String) -> IO ()
+handleOut _ s _ = putStrLn s
 
-handleImageResponse :: AppContext -> ByteString -> Int -> IO ()
-handleImageResponse ctx bs status = do
+handleImageResponse :: AppContext -> AppRequest -> Maybe (TQueue AppRequest) -> ByteString -> Int -> IO ()
+handleImageResponse ctx r _ bs status = do
     addToTQueue ("Handling image. Got " ++ show status) (schedOut $ app_sched ctx)
-    when (status >= 200 && status < 300) $ do
+    if status >= 200 && status < 300 then do
         case image of
-            Image i          -> do
-                comments <- getImageComments (image_id i) (image_comment_count i) ctx
+            Image i -> do
+                when (load_full_images $ app_sett ctx) $ do
+                    comments <- getImageComments (image_id i) (image_comment_count i) ctx
+                    writeOut ctx comments
                 writeOut ctx image
-                writeOut ctx comments
             DuplicateImage i -> writeOut ctx image
-            DeletedImage i   -> writeOut ctx image
-            NullImage        -> writeOut ctx image
-        where image = decodeNoMaybe bs
-    --when (status >= 300 && status < 400) $ putStrLn "Redirected"
-    --when (status >= 400 && status < 500) $ putStrLn "Client error"
-    --when (status >= 500 && status < 600) $ putStrLn "Server error"
+            DeletedImage i -> writeOut ctx image
+            NullImage -> writeOut ctx image
+    else do
+        handleBadResponse ctx r status
+    where image = decodeNoMaybe bs
 
-handleUserResponse :: AppContext -> ByteString -> Int -> IO ()
-handleUserResponse ctx bs status = do
+handleUserResponse :: AppContext -> AppRequest -> Maybe (TQueue AppRequest) -> ByteString -> Int -> IO ()
+handleUserResponse ctx r _ bs status = do
     addToTQueue ("Handling user. Got " ++ show status) (schedOut $ app_sched ctx)
-    when (status >= 200 && status < 300) $ do
+    if status >= 200 && status < 300 then do
         case user of
-            User{}   -> writeOut ctx user
+            User{} -> do
+                when (load_full_users $ app_sett ctx) $ do
+                    faves <- getUserFavoritesSimple (user_name user) $ app_sett ctx
+                    writeOut ctx faves
+                writeOut ctx user
             NullUser -> writeOut ctx user
-            _        -> writeOut ctx "Uh oh"
-        where user = decodeNoMaybe bs
-    -- when (status >= 300 && status < 400) $ putStrLn "Redirected"
-    -- when (status >= 400 && status < 500) $ putStrLn "Client error"
-    -- when (status >= 500 && status < 600) $ putStrLn "Server error"
+            _  -> writeOut ctx "Uh oh"
+    else do
+        handleBadResponse ctx r status
+    where user = decodeNoMaybe bs
 
-handleTagPageResponse :: AppContext -> ByteString -> Int -> IO ()
-handleTagPageResponse ctx bs status = do
+handleTagPageResponse :: AppContext -> AppRequest -> Maybe (TQueue AppRequest) -> ByteString -> Int -> IO ()
+handleTagPageResponse ctx r _ bs status = do
     addToTQueue ("Handling tag page. Got " ++ show status) (schedOut $ app_sched ctx)
 
-handleCommentPageResponse :: AppContext -> ByteString -> Int -> IO ()
-handleCommentPageResponse ctx bs status = do
+handleCommentPageResponse :: AppContext -> AppRequest -> Maybe (TQueue AppRequest) -> ByteString -> Int -> IO ()
+handleCommentPageResponse ctx r _ bs status = do
     addToTQueue ("Handling comment page. Got " ++ show status) (schedOut $ app_sched ctx)
 
-handleSearchPageResponse :: AppContext -> ByteString -> Int -> IO ()
-handleSearchPageResponse ctx bs status = do
+handleSearchPageResponse :: AppContext -> AppRequest -> Maybe (TQueue AppRequest) -> ByteString -> Int -> IO ()
+handleSearchPageResponse ctx r _ bs status = do
     addToTQueue ("Handling search page. Got " ++ show status) (schedOut $ app_sched ctx)
 
+handleBadResponse :: AppContext -> AppRequest -> Int -> IO ()
+handleBadResponse ctx r s = do
+    if s >= 300 && s < 400 then
+        writeOut ctx $ "Got " ++ show s ++ " at " ++ (requestUri r) ++ ". Not retrying."
+    else if s >= 400 && s < 500 then
+        case s of
+            400 -> unless (requestTries r >= max_retries) $ do
+                        writeOut ctx $ "Got 400 at " ++ (requestUri r) ++ ". Retrying."
+                        retryRequest (incReqeust r s) ctx
+            _   -> writeOut ctx $ "Got " ++ show s ++ " at " ++ (requestUri r) ++ ". Not retrying."
+    else if s >= 500 && s < 600 then
+        case s of
+            500 -> unless (requestTries r >= max_retries) $ do
+                        writeOut ctx $ "Got 500 at " ++ (requestUri r) ++ ". Retrying."
+                        retryRequest (incReqeust r s) ctx
+            _   -> writeOut ctx $ "Got " ++ show s ++ " at " ++ (requestUri r) ++ ". Not retrying."
+    else
+        writeOut ctx $ "Got " ++ show s ++ " at " ++ (requestUri r) ++ ". Not retrying."
+    where max_retries = max_retry_count $ app_sett ctx
 
 makeImageRequest :: Settings -> ImageId -> AppRequest
-makeImageRequest s i = AppRequest uri Nothing GET handleImageResponse
+makeImageRequest s i = AppRequest uri Nothing GET 0 [] handleImageResponse
     where uri = imageAPI i s
 
 makeUserRequest :: Settings -> UserId -> AppRequest
-makeUserRequest s u = AppRequest uri Nothing GET handleUserResponse
+makeUserRequest s u = AppRequest uri Nothing GET 0 [] handleUserResponse
     where uri = userAPI u s
 
 makeTagPageRequest :: Settings -> PageNo -> AppRequest
-makeTagPageRequest s p = AppRequest uri Nothing GET handleTagPageResponse
+makeTagPageRequest s p = AppRequest uri Nothing GET 0 [] handleTagPageResponse
     where uri = tagsAPI p s
 
 makeCommentPageRequest :: Settings -> ImageId -> PageNo -> AppRequest
-makeCommentPageRequest s i p = AppRequest uri Nothing GET handleCommentPageResponse
+makeCommentPageRequest s i p = AppRequest uri Nothing GET 0 [] handleCommentPageResponse
     where uri = commentsAPI i p s
 
 makeSearchPageRequest :: Settings -> String -> PageNo -> AppRequest
-makeSearchPageRequest s q p = AppRequest uri Nothing GET handleSearchPageResponse
+makeSearchPageRequest s q p = AppRequest uri Nothing GET 0 [] handleSearchPageResponse
     where uri = searchAPI q p s
 
 -- processImage :: AppContext -> Scheduler -> ImageId -> IO ()

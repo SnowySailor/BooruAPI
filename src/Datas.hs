@@ -143,14 +143,17 @@ data Settings = Settings {
     load_full_images    :: Bool,
     load_full_users     :: Bool,
     num_request_threads :: Int,
-    requests_per_second :: Double
+    requests_per_second :: Double,
+    max_retry_count     :: Int
 } deriving (Show)
 
 data AppRequest = AppRequest {
     requestUri      :: String,
     requestBody     :: Maybe ByteString,
     requestMethod   :: HTTPMethod,
-    requestCallback :: AppContext -> ByteString -> Int -> IO ()
+    requestTries    :: Int,
+    requestCodes    :: [Int],
+    requestCallback :: AppContext -> AppRequest -> Maybe (TQueue AppRequest) -> ByteString -> Int -> IO ()
 }
 
 data Scheduler = Scheduler {
@@ -337,6 +340,7 @@ instance FromJSON Settings where
             <*> v .:? "load_full_users"     .!= False
             <*> v .:? "num_request_threads" .!= 1
             <*> v .:? "max_requests_per_second" .!= 4.0
+            <*> v .:? "max_retry_count"     .!= 2
     parseJSON _          = fail "Unable to parse non-Object"
 
 instance FromJSON DatabaseCredentials where
