@@ -13,6 +13,7 @@ import Data.Aeson
 import Data.Time.Clock
 import Data.Attoparsec.ByteString
 import Data.ByteString.Lazy (ByteString)
+import Data.HashSet
 import GHC.Word
 
 -- Types
@@ -147,22 +148,27 @@ data Settings = Settings {
     max_retry_count     :: Int
 } deriving (Show)
 
-data AppRequest = AppRequest {
-    requestUri      :: String,
-    requestBody     :: Maybe ByteString,
-    requestMethod   :: HTTPMethod,
-    requestTries    :: Int,
-    requestCodes    :: [Int],
-    requestCallback :: AppContext -> AppRequest -> Maybe (TQueue AppRequest) -> ByteString -> Int -> IO ()
-}
+-- data AppRequest = AppRequest {
+--     requestUri      :: String,
+--     requestBody     :: Maybe ByteString,
+--     requestMethod   :: HTTPMethod,
+--     requestTries    :: Int,
+--     requestCodes    :: [Int],
+--     requestCallback :: AppContext -> AppRequest -> ByteString -> Int -> IO (),
+--     requestRetry    :: Maybe (AppRequest -> IO ())
+-- }
 
 data Scheduler = Scheduler {
-    schedRequestQueue :: TBQueue AppRequest,
-    schedRetryQueue   :: TQueue AppRequest,
-    schedRateLimiter  :: TBQueue (),
-    schedReqPerSec    :: Double,
-    schedOut          :: TQueue String
+    schedRateLimiter :: TBQueue (),
+    schedReqPerSec   :: Double,
+    schedOut         :: TQueue String
 }
+
+-- data RequestQueueContext a = RequestQueueContext {
+--     requestMainQueue  :: TBQueue AppRequest,
+--     requestRetryQueue :: TQueue AppRequest,
+--     requestInProgress :: TMVar Int
+-- }
 
 data AppContext = AppContext {
     app_sett     :: Settings,

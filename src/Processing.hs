@@ -2,8 +2,10 @@ module Processing where
 
 import Datas
 import Control.Monad
+import Control.Exception
 import Control.Concurrent
 import Control.Concurrent.STM
+import Control.Concurrent.Async
 import Network.HTTP.Client as C
 import Network.HTTP.Conduit
 import Network.HTTP.Types.Status
@@ -60,6 +62,18 @@ addToTBQueue x q = atomically $ writeTBQueue q x
 addToTQueue :: a -> TQueue a -> IO ()
 addToTQueue x q = atomically $ writeTQueue q x
 
+writeTQueueM :: Maybe (TQueue a) -> a -> IO ()
+writeTQueueM mQ e =
+    case mQ of
+        Just q -> atomically $ writeTQueue q e
+        Nothing -> return ()
+
+writeTBQueueM :: Maybe (TQueue a) -> a -> IO ()
+writeTBQueueM mQ e =
+    case mQ of
+        Just q -> atomically $ writeTBQueue q e
+        Nothing -> return ()
+
 
 -- Processing queues
 processTBQueue :: a -> (a -> TBQueue b) -> (a -> b -> Maybe (TQueue b) -> IO c) -> IO c
@@ -72,14 +86,14 @@ processTBQueue sched q f = forever $ do
 processTQueue :: a -> (a -> TQueue b) -> (a -> b -> Maybe (TQueue b) -> IO c) -> IO c
 processTQueue sched q f = forever $ do
      -- Get the next value from the queue
-    toProcess <- atomically $ readTQueue (q sched)
+    toProcess <- atomically $ readTQueue q
      -- Process the value and return the result
     f sched toProcess Nothing
 
 processTQueueRetry :: a -> (a -> TQueue b) -> (a -> b -> Maybe (TQueue b) -> IO c) -> TQueue b -> IO c
 processTQueueRetry sched q f ret = forever $ do
      -- Get the next value from the queue
-    toProcess <- atomically $ readTQueue (q sched)
+    toProcess <- atomically $ readTQueue q
      -- Process the value and return the result
     f sched toProcess $ Just ret
 
@@ -98,6 +112,33 @@ processRequest ctx req retry = do
             manager <- newManager tlsManagerSettings
             rateLimit $ app_sched ctx
             resp    <- C.httpLbs pReq manager
+            writeOut ctx $ responseBody resp
             callback ctx req retry (responseBody resp) (statusCode $ responseStatus resp)
             where callback = requestCallback req
         _ -> undefined -- TODO: Handle other methods
+
+getNestedRequests :: (TVar [a] -> Settings -> c -> AppRequest) -> [c] -> AppContext -> IO [a]
+getNestedRequests makeRequest applyList ctx = do
+    results      <- atomically $ newTVar []
+    let requests    = map (makeRequest results (app_sett ctx)) applyList
+        threadCount = num_request_threads $ app_sett ctx
+    mapM_ (writeOut ctx) $ map requestUri requests
+    requestQueue <- atomically $ newTQueue
+    retryQueue   <- atomically $ newTQueue
+    addTraverseToTQueueSync requests requestQueue
+    requestThreads <- replicateM threadCount $ forkIO $ processTQueueRetry ctx (\_ -> requestQueue) (processRequest) retryQueue
+    retryThreads   <- replicateM threadCount $ forkIO $ processTQueueRetry ctx (\_ -> retryQueue) (processRequest) retryQueue
+    let threads = requestThreads ++ retryThreads
+    waiter <- async $ atomically $ do
+        empty1 <- isEmptyTQueue requestQueue
+        empty2 <- isEmptyTQueue retryQueue
+        unless (all (==True) [empty1, empty2]) retry
+        return ()
+    catch
+        (wait waiter)
+        (\e -> do
+            writeOut ctx (e :: AsyncException)
+            mapM_ killThread threads
+        )
+    mapM_ killThread threads
+    atomically $ readTVar results
