@@ -54,7 +54,7 @@ processTBQueue rq q f = forever $ do
                 orig <- takeTMVar (requestInProgress rq)
                 putTMVar (requestInProgress rq) $ orig-1
         )
-        -- "In-between" Process the value and return the result
+        -- "In-between": Process the value and return the result
         (
             \toProcess -> f rq toProcess
         )
@@ -76,7 +76,7 @@ processTQueue rq q f = forever $ do
                 orig <- takeTMVar (requestInProgress rq)
                 putTMVar (requestInProgress rq) $ orig-1
         )
-        -- "In-between" Process the value and return the result
+        -- "In-between": Process the value and return the result
         (
             \toProcess -> f rq toProcess
         )
@@ -119,11 +119,24 @@ addTraverseToTQueue l q c = do
     -- Notify that we've completed the task
     atomically $ takeTMVar c
 
-makeAndDoRequests :: (TMVar a -> b -> QueueRequest) -> [b] -> TMVar a -> Maybe RateLimiter -> IO a
-makeAndDoRequests mkRequest l results rl = do
-    let requests    = map (mkRequest results) l
-        threadCount = 2--num_request_threads $ app_sett ctx
+doRequestsMulti :: [QueueRequest] -> TMVar a -> Maybe RateLimiter -> Int -> IO a
+doRequestsMulti a b c d = doRequests' d a b c
 
+doRequests :: [QueueRequest] -> TMVar a -> Maybe RateLimiter -> IO a
+doRequests = doRequests' 1
+
+makeAndDoRequestsMulti :: (TMVar a -> b -> QueueRequest) -> [b] -> TMVar a -> Maybe RateLimiter -> Int -> IO a
+makeAndDoRequestsMulti makeRequest l results rl t = 
+    doRequests' t requests results rl
+    where requests = map (makeRequest results) l
+
+makeAndDoRequests :: (TMVar a -> b -> QueueRequest) -> [b] -> TMVar a -> Maybe RateLimiter -> IO a
+makeAndDoRequests makeRequest l results =
+    doRequests' 1 requests results
+    where requests = map (makeRequest results) l
+
+doRequests' :: Int -> [QueueRequest] -> TMVar a -> Maybe RateLimiter -> IO a
+doRequests' threadCount requests results rl = do
     -- Spawn new STM variables
     context <- atomically $ do
         requestQueue <- newTBQueue $ (*) 2 threadCount
