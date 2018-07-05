@@ -23,9 +23,6 @@ dripSem rl rate = forever $ do
      -- Wait a certin amount of time before opening a new spot
     threadDelay $ (*) 1000000 $ floor $ 1/rate
 
-rateLimit :: Scheduler -> IO ()
-rateLimit sched = atomically $ readTBQueue $ schedRateLimiter sched
-
 writeOut :: (Show a) => TQueue a -> a -> IO ()
 writeOut q e = atomically $ writeTQueue q e
 

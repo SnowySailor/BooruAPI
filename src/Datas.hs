@@ -26,6 +26,7 @@ type AwardId     = Int
 type UserId      = Int
 type Username    = String
 type RateLimiter = TBQueue ()
+type OutQueue    = TQueue String
 
 -- Datas
 
@@ -170,12 +171,6 @@ data Settings = Settings {
     requests_per_second :: Double,
     max_retry_count     :: Int
 } deriving (Show)
-
-data Scheduler = Scheduler {
-    schedRateLimiter :: TBQueue (),
-    schedReqPerSec   :: Double,
-    schedOut         :: TQueue String
-}
 
 -- Classes
 

@@ -21,20 +21,20 @@ getImage i s = do
 
 -- Comments
 
-getImageComments :: ImageId -> Int -> Settings -> TQueue String -> IO [CommentPage]
+getImageComments :: ImageId -> Int -> Settings -> OutQueue -> IO [CommentPage]
 getImageComments a b c d = getImageComments' a b c d Nothing
 
-getImageCommentsRL :: ImageId -> Int -> Settings -> TQueue String -> RateLimiter -> IO [CommentPage]
+getImageCommentsRL :: ImageId -> Int -> Settings -> OutQueue -> RateLimiter -> IO [CommentPage]
 getImageCommentsRL a b c d e = getImageComments' a b c d $ Just e
 
-getImageComments' :: ImageId -> Int -> Settings -> TQueue String -> Maybe RateLimiter -> IO [CommentPage]
+getImageComments' :: ImageId -> Int -> Settings -> OutQueue -> Maybe RateLimiter -> IO [CommentPage]
 getImageComments' i count s out rl = do
     results <- atomically $ newTVar []
     let (p, _) = divMod count $ comments_per_page s
-        requests = map (\page -> makeCommentPageRequest s out i page results) [1..p]
+        requests = map (\page -> makeCommentPageRequest s out i page results) [1..p+1]
     doRequests requests results rl
 
-handleCommentPageResponse :: TQueue String -> TVar [CommentPage] -> RequestQueues -> QueueRequest -> QueueResponse -> IO ()
+handleCommentPageResponse :: OutQueue -> TVar [CommentPage] -> RequestQueues -> QueueRequest -> QueueResponse -> IO ()
 handleCommentPageResponse out results rq req resp = 
     if status >= 200 && status < 300 then do
         atomically $ do
@@ -45,7 +45,7 @@ handleCommentPageResponse out results rq req resp =
         handleBadResponse out rq req resp
     where status = queueResponseStatus resp
 
-makeCommentPageRequest :: Settings -> TQueue String -> ImageId -> PageNo -> TVar [CommentPage] -> QueueRequest
+makeCommentPageRequest :: Settings -> OutQueue -> ImageId -> PageNo -> TVar [CommentPage] -> QueueRequest
 makeCommentPageRequest s out image page results = QueueRequest uri Nothing GET 0 [] (max_retry_count s) $ handleCommentPageResponse out results
     where uri = commentsAPI image page s
 
@@ -74,13 +74,13 @@ getUserByName n s = do
     (json, status) <- getUserJSON (encode n) s
     return $ (decodeNoMaybe json, status)
 
-getUserFavorites :: Username -> Settings -> TQueue String -> IO [ImageId]
+getUserFavorites :: Username -> Settings -> OutQueue -> IO [ImageId]
 getUserFavorites a b c = getUserFavorites' a b c Nothing
 
-getUserFavoritesRL :: Username -> Settings -> TQueue String -> RateLimiter -> IO [ImageId]
+getUserFavoritesRL :: Username -> Settings -> OutQueue -> RateLimiter -> IO [ImageId]
 getUserFavoritesRL a b c d = getUserFavorites' a b c $ Just d
 
-getUserFavorites' :: Username -> Settings -> TQueue String -> Maybe RateLimiter -> IO [ImageId]
+getUserFavorites' :: Username -> Settings -> OutQueue -> Maybe RateLimiter -> IO [ImageId]
 getUserFavorites' name s out rl = do
     results <- atomically $ newTVar []
 
@@ -101,7 +101,7 @@ getUserFavorites' name s out rl = do
                     return . map getImageId . flatten . map getSearchImages $ page:(filterNulls $ restOfUserFaves)
     where q = "faved_by:" ++ name
 
-handleSearchPageResponse :: TQueue String -> TVar [SearchPage] -> RequestQueues -> QueueRequest -> QueueResponse -> IO ()
+handleSearchPageResponse :: OutQueue -> TVar [SearchPage] -> RequestQueues -> QueueRequest -> QueueResponse -> IO ()
 handleSearchPageResponse out results rq req resp = do
     if status >= 200 && status < 300 then do
         atomically $ do
@@ -112,7 +112,7 @@ handleSearchPageResponse out results rq req resp = do
         handleBadResponse out rq req resp
     where status = queueResponseStatus resp
 
-makeSearchPageRequest :: Settings -> TQueue String -> String -> PageNo -> TVar [SearchPage] -> QueueRequest
+makeSearchPageRequest :: Settings -> OutQueue -> String -> PageNo -> TVar [SearchPage] -> QueueRequest
 makeSearchPageRequest s out q p results = QueueRequest uri Nothing GET 0 [] (max_retry_count s) $ handleSearchPageResponse out results
     where uri = searchAPI q p s
 
@@ -135,7 +135,7 @@ getSearchPage q i s = do
     (json, status) <- getSearchJSON q i s
     return $ (decodeNoMaybe json, status)
 
-handleBadResponse :: TQueue String -> RequestQueues -> QueueRequest -> QueueResponse -> IO ()
+handleBadResponse :: OutQueue -> RequestQueues -> QueueRequest -> QueueResponse -> IO ()
 handleBadResponse out rq req resp = do
     if status >= 300 && status < 400 then
         writeOut out $ "Got " ++ show status ++ " at " ++ (requestUri req) ++ ". Not retrying."
