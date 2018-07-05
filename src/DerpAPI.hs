@@ -18,28 +18,28 @@ getImage i s = do
     (imageData, status) <- getImageJSON i s
     return (decodeNoMaybe imageData, status)
 
-getImageComments :: ImageId -> Int -> AppContext -> IO [CommentPage]
-getImageComments i count ctx = do
-    let (p, _) = divMod count $ comments_per_page $ app_sett ctx
-    getNestedRequests (\x y -> makeCommentPageRequest x y i) [1..p] ctx
+-- getImageComments :: ImageId -> Int -> AppContext -> IO [CommentPage]
+-- getImageComments i count ctx = do
+--     let (p, _) = divMod count $ comments_per_page $ app_sett ctx
+--     getNestedRequests (\x y -> makeCommentPageRequest x y i) [1..p] ctx
 
--- Comments
+-- -- Comments
 
-handleCommentPageResponse :: TVar [CommentPage] -> AppContext -> AppRequest -> Maybe (TQueue AppRequest) -> ByteString -> Int -> IO ()
-handleCommentPageResponse t ctx req retry bs s = 
-    if s >= 200 && s < 300 then do
-        atomically $ do
-            let page = decodeNoMaybe bs
-            v <- readTVar t
-            writeTVar t $ page:v
-    else do
-        case retry of
-            Just a -> addToTQueue (incReqeust req s) a
-            Nothing -> return ()
+-- handleCommentPageResponse :: TVar [CommentPage] -> AppContext -> AppRequest -> Maybe (TQueue AppRequest) -> ByteString -> Int -> IO ()
+-- handleCommentPageResponse t ctx req retry bs s = 
+--     if s >= 200 && s < 300 then do
+--         atomically $ do
+--             let page = decodeNoMaybe bs
+--             v <- readTVar t
+--             writeTVar t $ page:v
+--     else do
+--         case retry of
+--             Just a -> addToTQueue (incReqeust req s) a
+--             Nothing -> return ()
 
-makeCommentPageRequest :: TVar [CommentPage] -> Settings -> ImageId -> PageNo -> AppRequest
-makeCommentPageRequest t s i p = AppRequest uri Nothing GET 0 [] $ handleCommentPageResponse t
-    where uri = commentsAPI i p s
+-- makeCommentPageRequest :: TVar [CommentPage] -> Settings -> ImageId -> PageNo -> AppRequest
+-- makeCommentPageRequest t s i p = AppRequest uri Nothing GET 0 [] $ handleCommentPageResponse t
+--     where uri = commentsAPI i p s
 
 getImageCommentsSimple :: ImageId -> Int -> Settings -> IO [Comment]
 getImageCommentsSimple i count s = do
@@ -64,38 +64,38 @@ getUserByName n s = do
     (json, status) <- getUserJSON (encode n) s
     return $ (decodeNoMaybe json, status)
 
-handleSearchPageResponse :: TVar [SearchPage] -> AppContext -> AppRequest -> Maybe (TQueue AppRequest) -> ByteString -> Int -> IO ()
-handleSearchPageResponse t ctx req retry bs s = do
-    if s >= 200 && s < 300 then do
-        atomically $ do
-            let page = decodeNoMaybe bs
-            v <- readTVar t
-            writeTVar t $ page:v
-    else do
-        case retry of
-            Just a -> addToTQueue (incReqeust req s) a
-            Nothing -> return ()
+-- handleSearchPageResponse :: TVar [SearchPage] -> AppContext -> AppRequest -> Maybe (TQueue AppRequest) -> ByteString -> Int -> IO ()
+-- handleSearchPageResponse t ctx req retry bs s = do
+--     if s >= 200 && s < 300 then do
+--         atomically $ do
+--             let page = decodeNoMaybe bs
+--             v <- readTVar t
+--             writeTVar t $ page:v
+--     else do
+--         case retry of
+--             Just a -> addToTQueue (incReqeust req s) a
+--             Nothing -> return ()
 
-getUserFavorites :: Username -> AppContext -> IO [ImageId]
-getUserFavorites u ctx = do
-    x <- getNestedRequests (\x y -> makeSearchPageRequest x y q) [1] ctx
-    case x of
-        []  -> return []
-        x:_ ->
-            case x of
-                NullSearchPage -> do
-                    writeOut ctx $ "Got NullSearchPage for first page"
-                    return []
-                SearchPage c _ -> do
-                    let totalCount = c
-                        (p, _) = divMod totalCount $ (images_per_page . app_sett) ctx
-                    restOfUserFaves <- getNestedRequests (\x y -> makeSearchPageRequest x y q) [2..p] ctx
-                    return . map getImageId . flatten . map getSearchImages $ x:(filterNulls $ restOfUserFaves)
-    where q = "faved_by:" ++ u
+-- getUserFavorites :: Username -> AppContext -> IO [ImageId]
+-- getUserFavorites u ctx = do
+--     x <- getNestedRequests (\x y -> makeSearchPageRequest x y q) [1] ctx
+--     case x of
+--         []  -> return []
+--         x:_ ->
+--             case x of
+--                 NullSearchPage -> do
+--                     writeOut ctx $ "Got NullSearchPage for first page"
+--                     return []
+--                 SearchPage c _ -> do
+--                     let totalCount = c
+--                         (p, _) = divMod totalCount $ (images_per_page . app_sett) ctx
+--                     restOfUserFaves <- getNestedRequests (\x y -> makeSearchPageRequest x y q) [2..p] ctx
+--                     return . map getImageId . flatten . map getSearchImages $ x:(filterNulls $ restOfUserFaves)
+--     where q = "faved_by:" ++ u
 
-makeSearchPageRequest :: TVar [SearchPage] -> Settings -> String -> PageNo -> AppRequest
-makeSearchPageRequest t s q p = AppRequest uri Nothing GET 0 [] $ handleSearchPageResponse t
-    where uri = searchAPI q p s
+-- makeSearchPageRequest :: TVar [SearchPage] -> Settings -> String -> PageNo -> AppRequest
+-- makeSearchPageRequest t s q p = AppRequest uri Nothing GET 0 [] $ handleSearchPageResponse t
+--     where uri = searchAPI q p s
 
 -- Tags
 

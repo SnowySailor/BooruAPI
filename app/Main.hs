@@ -1,22 +1,22 @@
 module Main where
 
--- import Control.Concurrent.Async
--- import Control.Exception (AsyncException)
--- import Control.Monad
--- import Control.Monad.Catch
--- import Control.Concurrent
--- import Control.Concurrent.STM
--- import DerpAPI
--- import Datas
--- import Data.Pool
--- import Database.Pool
--- import Database.Loader
--- import Config
--- import Data.ByteString.Lazy (ByteString)
--- import APIGetter
--- import Processing
--- import DataHelpers
+import Control.Concurrent.Async
+import Control.Exception (AsyncException)
+import Control.Monad
+import Control.Monad.Catch
+import Control.Concurrent
+import Control.Concurrent.STM
+import DerpAPI
+import Datas
+import Data.Pool
+import Database.Pool
+import Database.Loader
+import Config
+import APIGetter
+import Processing
+import DataHelpers
 import RequestQueues
+import Helpers
 
 main :: IO ()
 main = do
@@ -30,48 +30,45 @@ main = do
     pool     <- getPool resource (db_database creds)
 
 
-    -- Create new request, retry, and rate-limit variables
-    rq   <- atomically $ newTBQueue $ (*) 2 $ num_request_threads settings
-    retq <- atomically $ newTQueue
-    rl   <- atomically $ newTBQueue $ (*) 2 $ num_request_threads settings
-    out  <- atomically $ newTQueue
+    -- Create new request, retry, rate-limit, and results variables
+    rq      <- atomically $ newTBQueue $ (*) 2 $ num_request_threads settings
+    retq    <- atomically $ newTQueue
+    rl      <- atomically $ newTBQueue $ (*) 2 $ num_request_threads settings
+    out     <- atomically $ newTQueue
+    results <- atomically $ newTMVar []
 
     -- Create necessary data
-    let imageList = map (makeImageRequest settings) [(load_image_start settings)..(load_image_end settings)]
-        userList  = map (makeUserRequest settings)  [(load_user_start settings)..(load_user_end settings)]
-        threadNum = num_request_threads settings
+    let imageList    = map (makeImageRequest settings out) [(load_image_start settings)..(load_image_end settings)]
+        userList     = map (makeUserRequest settings out)  [(load_user_start settings)..(load_user_end settings)]
+        combinedList = zipLists imageList userList -- [image, user, image, user, image, user, image, etc.]
+        threadCount  = num_request_threads settings
 
     -- START TASKS --
 
-    -- Flags for when image/user queuing is complete
+    -- Flags for when image/user/output queuing is complete
     iComplete <- atomically $ newTMVar ()
     uComplete <- atomically $ newTMVar ()
+    oComplete <- atomically $ newTMVar 0
+
     -- Start all necessary loader/output/rate-limiting threads
-    populateImageRequestThread <- forkIO $ addTraverseToTBQueue imageList (schedRequestQueue sched) iComplete
-    populateUserRequestThread  <- forkIO $ addTraverseToTBQueue userList (schedRequestQueue sched) uComplete
-    dripSemThread              <- forkIO $ dripSem sched
-    outThread                  <- forkIO $ processTQueue ctx (schedOut . app_sched) handleOut
-
-    -- Start request threads
-    --requestThreads             <- replicateM threadNum $ forkIO $ processTBQueue ctx (schedRequestQueue . app_sched) processRequest
-    --retryThreads               <- replicateM threadNum $ forkIO $ processTQueue ctx (schedRetryQueue . app_sched) processRequest
-
+    dripSemThread <- forkIO $ dripSem rl (requests_per_second settings)
+    outThread     <- forkIO $ processTQueue 0 out handleOut $ Just oComplete
+    complete      <- doRequestsMulti combinedList results (Just rl) threadCount
+    
     -- END START TASKS --
 
-    let threads = [populateImageRequestThread, populateUserRequestThread, outThread, dripSemThread]
+    let threads = [outThread, dripSemThread]
 
     -- Create async waiter
     waiter <- async $ atomically $ do
-        empty1 <- isEmptyTBQueue $ schedRequestQueue sched
-        empty2 <- isEmptyTQueue  $ schedRetryQueue sched
-        empty3 <- isEmptyTQueue  $ schedOut sched
-        empty4 <- isEmptyTMVar   $ iComplete
-        empty5 <- isEmptyTMVar   $ uComplete
+        empty1 <- isEmptyTMVar iComplete
+        empty2 <- isEmptyTMVar uComplete
+        ipOut  <- takeTMVar    oComplete
         -- If all are empty, then the run is complete
-        unless (all (==True) [empty1, empty2, empty3, empty4, empty5]) retry
+        unless (all (==True) [empty1, empty2, (ipOut==0)]) retry
         return ()
 
-    putStrLn "Running..."
+    writeOut out "Running..."
     catch
         (wait waiter) -- Wait on all queues to be empty
         (\e -> do
@@ -86,138 +83,77 @@ main = do
     putStrLn "Completed."
 
 -- Handling
-handleOut :: AppContext -> String -> Maybe (TQueue String) -> IO ()
-handleOut _ s _ = putStrLn s
+handleOut :: Int -> String -> IO ()
+handleOut _ s = putStrLn s
 
-handleImageResponse :: AppContext -> AppRequest -> Maybe (TQueue AppRequest) -> ByteString -> Int -> IO ()
-handleImageResponse ctx r _ bs status = do
-    addToTQueue ("Handling image. Got " ++ show status) (schedOut $ app_sched ctx)
+handleImageResponse :: TQueue String -> RequestQueues -> QueueRequest -> QueueResponse -> IO ()
+handleImageResponse out rq req resp = do
+    writeOut out $ "Handling image. Got " ++ show status
     if status >= 200 && status < 300 then do
         case image of
             Image i -> do
-                when (load_full_images $ app_sett ctx) $ do
-                    comments <- getImageComments (image_id i) (image_comment_count i) ctx
-                    writeOut ctx comments
-                writeOut ctx image
-            DuplicateImage i -> writeOut ctx image
-            DeletedImage i -> writeOut ctx image
-            NullImage -> writeOut ctx image
+                -- when (load_full_images $ app_sett ctx) $ do
+                --     comments <- getImageComments (image_id i) (image_comment_count i) ctx
+                --     writeOut out comments
+                writeOut out $ show image
+            DuplicateImage i -> writeOut out $ show image
+            DeletedImage i -> writeOut out $ show image
+            NullImage -> writeOut out $ show image
     else do
-        handleBadResponse ctx r status
-    where image = decodeNoMaybe bs
+        handleBadResponse out rq req resp
+    where image = decodeNoMaybe $ queueResponseBody resp
+          status = queueResponseStatus resp
 
-handleUserResponse :: AppContext -> AppRequest -> Maybe (TQueue AppRequest) -> ByteString -> Int -> IO ()
-handleUserResponse ctx r _ bs status = do
-    addToTQueue ("Handling user. Got " ++ show status) (schedOut $ app_sched ctx)
+handleUserResponse :: TQueue String -> RequestQueues -> QueueRequest -> QueueResponse -> IO ()
+handleUserResponse out rq req resp = do
+    writeOut out $ "Handling user. Got " ++ show status
     if status >= 200 && status < 300 then do
         case user of
             User{} -> do
-                when (load_full_users $ app_sett ctx) $ do
-                    faves <- getUserFavorites (user_name user) ctx
-                    writeOut ctx faves
-                writeOut ctx user
-            NullUser -> writeOut ctx user
-            _  -> writeOut ctx "Uh oh"
+                -- when (load_full_users $ app_sett ctx) $ do
+                --     faves <- getUserFavorites (user_name user) ctx
+                --     writeOut ctx faves
+                writeOut out $ show user
+            NullUser -> writeOut out $ show user
+            _  -> writeOut out "Uh oh"
     else do
-        handleBadResponse ctx r status
-    where user = decodeNoMaybe bs
+        handleBadResponse out rq req resp
+    where user = decodeNoMaybe $ queueResponseBody resp
+          status = queueResponseStatus resp
 
-handleTagPageResponse :: AppContext -> AppRequest -> Maybe (TQueue AppRequest) -> ByteString -> Int -> IO ()
-handleTagPageResponse ctx r _ bs status = do
-    addToTQueue ("Handling tag page. Got " ++ show status) (schedOut $ app_sched ctx)
+handleTagPageResponse :: TQueue String -> RequestQueues -> QueueRequest -> QueueResponse -> IO ()
+handleTagPageResponse out rq req resp = do
+    writeOut out $ "Handling tag page. Got " ++ (show $ queueResponseStatus resp)
 
-handleBadResponse :: AppContext -> AppRequest -> Int -> IO ()
-handleBadResponse ctx r s = do
-    if s >= 300 && s < 400 then
-        writeOut ctx $ "Got " ++ show s ++ " at " ++ (requestUri r) ++ ". Not retrying."
-    else if s >= 400 && s < 500 then
-        case s of
-            400 -> unless (requestTries r >= max_retries) $ do
-                        writeOut ctx $ "Got 400 at " ++ (requestUri r) ++ ". Retrying."
-                        retryRequest (incReqeust r s) ctx
-            _   -> writeOut ctx $ "Got " ++ show s ++ " at " ++ (requestUri r) ++ ". Not retrying."
-    else if s >= 500 && s < 600 then
-        case s of
-            500 -> unless (requestTries r >= max_retries) $ do
-                        writeOut ctx $ "Got 500 at " ++ (requestUri r) ++ ". Retrying."
-                        retryRequest (incReqeust r s) ctx
-            _   -> writeOut ctx $ "Got " ++ show s ++ " at " ++ (requestUri r) ++ ". Not retrying."
+handleBadResponse :: TQueue String -> RequestQueues -> QueueRequest -> QueueResponse -> IO ()
+handleBadResponse out rq req resp = do
+    if status >= 300 && status < 400 then
+        writeOut out $ "Got " ++ show status ++ " at " ++ (requestUri req) ++ ". Not retrying."
+    else if status >= 400 && status < 500 then
+        case status of
+            400 -> unless (requestTries req >= max_retries) $ do
+                        writeOut out $ "Got 400 at " ++ (requestUri req) ++ ". Retrying."
+                        retryRequest req resp rq
+            _   -> writeOut out $ "Got " ++ show status ++ " at " ++ (requestUri req) ++ ". Not retrying."
+    else if status >= 500 && status < 600 then
+        case status of
+            500 -> unless (requestTries req >= max_retries) $ do
+                        writeOut out $ "Got 500 at " ++ (requestUri req) ++ ". Retrying."
+                        retryRequest req resp rq
+            _   -> writeOut out $ "Got " ++ show status ++ " at " ++ (requestUri req) ++ ". Not retrying."
     else
-        writeOut ctx $ "Got " ++ show s ++ " at " ++ (requestUri r) ++ ". Not retrying."
-    where max_retries = max_retry_count $ app_sett ctx
+        writeOut out $ "Got " ++ show status ++ " at " ++ (requestUri req) ++ ". Not retrying."
+    where max_retries = requestTriesMax req
+          status = queueResponseStatus resp
 
-makeImageRequest :: Settings -> ImageId -> AppRequest
-makeImageRequest s i = AppRequest uri Nothing GET 0 [] handleImageResponse
+makeImageRequest :: Settings -> TQueue String -> ImageId -> QueueRequest
+makeImageRequest s out i = QueueRequest uri Nothing GET 0 [] (max_retry_count s) $ handleImageResponse out
     where uri = imageAPI i s
 
-makeUserRequest :: Settings -> UserId -> AppRequest
-makeUserRequest s u = AppRequest uri Nothing GET 0 [] handleUserResponse
+makeUserRequest :: Settings -> TQueue String -> UserId -> QueueRequest
+makeUserRequest s out u = QueueRequest uri Nothing GET 0 [] (max_retry_count s) $ handleUserResponse out
     where uri = userAPI u s
 
-makeTagPageRequest :: Settings -> PageNo -> AppRequest
-makeTagPageRequest s p = AppRequest uri Nothing GET 0 [] handleTagPageResponse
+makeTagPageRequest :: Settings -> TQueue String -> PageNo -> QueueRequest
+makeTagPageRequest s out p = QueueRequest uri Nothing GET 0 [] (max_retry_count s) $ handleTagPageResponse out
     where uri = tagsAPI p s
-
-
--- -- processImage :: AppContext -> Scheduler -> ImageId -> IO ()
--- -- processImage sett sched i = do
--- --     result <- case load_full_images $ app_sett sett of
--- --         True  -> handleImageFull sett sched i
--- --         False -> handleImage sett sched i
--- --     putStrLn $ show result
-
--- -- processUser :: AppContext -> Scheduler -> UserId -> IO ()
--- -- processUser sett sched u = do
--- --     result <- case load_full_users $ app_sett sett of
--- --         True  -> handleUserFull sett sched u
--- --         False -> handleUser sett sched u
--- --     putStrLn $ show result
-
--- -- processImageRetry :: AppContext -> Scheduler -> AppRequest -> IO ()
--- -- processImageRetry _ _ _ = return ()
-
--- -- processUserRetry :: AppContext -> Scheduler -> AppRequest -> IO ()
--- -- processUserRetry _ _ _ = return ()
-
--- -- -- Doing
--- -- handleUserFull :: AppContext -> Scheduler -> UserId -> IO (Int64, Int64, Int64, Int64)
--- -- handleUserFull sett sched u = do
--- --     (user, status) <- getUserFull u (app_sett sett)
--- --     case status of
--- --         200 -> withResource (app_db_pool sett) $ \conn -> loadUserFull user conn (db_schema $ app_db_creds sett)
--- --         _   -> do
--- --             atomically $ writeTQueue (schedUserRetryQueue sched) $ AppRequest u 0 [status]
--- --             return (0,0,0,0)
-
--- -- handleUser :: AppContext -> Scheduler -> UserId -> IO (Int64, Int64, Int64, Int64)
--- -- handleUser sett sched u = do
--- --     (user, status) <- getUser u (app_sett sett)
--- --     case status of
--- --         200 -> do
--- --             (a,b,c) <- withResource (app_db_pool sett) $ \conn -> loadUser user conn (db_schema $ app_db_creds sett)
--- --             return (a,b,c,0)
--- --         _   -> do
--- --             putStrLn $ "Got " ++ show status ++ " from user. Retrying."
--- --             atomically $ writeTQueue (schedUserRetryQueue sched) $ AppRequest u 0 [status]
--- --             return (0,0,0,0)
-
--- -- handleImage :: AppContext -> Scheduler -> ImageId -> IO (Int64, Int64, Int64)
--- -- handleImage sett sched i = do
--- --     (image, status) <- getImage i (app_sett sett)
--- --     case status of
--- --         200 -> do
--- --             (a,b) <- withResource (app_db_pool sett) $ \conn -> loadImage image conn (db_schema $ app_db_creds sett)
--- --             return (a,b,0)
--- --         _   -> do
--- --             putStrLn $ "Got " ++ show status ++ " from image. Retrying."
--- --             atomically $ writeTQueue (schedImageRetryQueue sched) $ AppRequest i 0 [status]
--- --             return (0,0,0)
-
--- -- handleImageFull :: AppContext -> Scheduler -> ImageId -> IO (Int64, Int64, Int64)
--- -- handleImageFull sett sched i = do
--- --     (image, status) <- getImageFull i (app_sett sett)
--- --     case status of
--- --         200 -> withResource (app_db_pool sett) $ \conn -> loadImageFull image conn (db_schema $ app_db_creds sett)
--- --         _   -> do
--- --             atomically $ writeTQueue (schedImageRetryQueue sched) $ AppRequest i 0 [status]
--- --             return (0,0,0)

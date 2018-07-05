@@ -11,3 +11,8 @@ parseJSONTime s =
 
 flatten :: [[a]] -> [a]
 flatten xs = foldl (\x y -> x ++ y) [] xs
+
+zipLists :: [a] -> [a] -> [a]
+zipLists (xs)   ([])   = xs
+zipLists ([])   (ys)   = ys
+zipLists (x:xs) (y:ys) = x:y:(zipLists xs ys)

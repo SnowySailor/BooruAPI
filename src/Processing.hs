@@ -16,15 +16,18 @@ import DataHelpers
     -- create a queue for its own thread
 
 -- Rate limiting
-dripSem :: Scheduler -> IO ()
-dripSem sched = forever $ do
+dripSem :: (RealFrac a) => RateLimiter -> a -> IO ()
+dripSem rl rate = forever $ do
      -- Write that we have a spot open
-    atomically $ writeTBQueue (schedRateLimiter sched) ()
+    atomically $ writeTBQueue rl ()
      -- Wait a certin amount of time before opening a new spot
-    threadDelay $ (*) 1000000 $ floor $ 1/(schedReqPerSec sched)
+    threadDelay $ (*) 1000000 $ floor $ 1/rate
 
 rateLimit :: Scheduler -> IO ()
 rateLimit sched = atomically $ readTBQueue $ schedRateLimiter sched
+
+writeOut :: (Show a) => TQueue a -> a -> IO ()
+writeOut q e = atomically $ writeTQueue q e
 
 -- Adding to queues
 
@@ -68,77 +71,17 @@ writeTQueueM mQ e =
         Just q -> atomically $ writeTQueue q e
         Nothing -> return ()
 
-writeTBQueueM :: Maybe (TQueue a) -> a -> IO ()
+writeTBQueueM :: Maybe (TBQueue a) -> a -> IO ()
 writeTBQueueM mQ e =
     case mQ of
         Just q -> atomically $ writeTBQueue q e
         Nothing -> return ()
 
+retryRequest :: QueueRequest -> QueueResponse -> RequestQueues -> IO ()
+retryRequest req resp rq = unless (requestTries req > requestTriesMax req) $
+    atomically $
+        writeTQueue (requestQueuesRetry rq) nr
+        where nr = incReqeust req $ queueResponseStatus resp
 
--- Processing queues
-processTBQueue :: a -> (a -> TBQueue b) -> (a -> b -> Maybe (TQueue b) -> IO c) -> IO c
-processTBQueue sched q f = forever $ do
-     -- Get the next value from the queue
-    toProcess <- atomically $ readTBQueue (q sched)
-     -- Process the value and return the result
-    f sched toProcess Nothing
-
-processTQueue :: a -> (a -> TQueue b) -> (a -> b -> Maybe (TQueue b) -> IO c) -> IO c
-processTQueue sched q f = forever $ do
-     -- Get the next value from the queue
-    toProcess <- atomically $ readTQueue q
-     -- Process the value and return the result
-    f sched toProcess Nothing
-
-processTQueueRetry :: a -> (a -> TQueue b) -> (a -> b -> Maybe (TQueue b) -> IO c) -> TQueue b -> IO c
-processTQueueRetry sched q f ret = forever $ do
-     -- Get the next value from the queue
-    toProcess <- atomically $ readTQueue q
-     -- Process the value and return the result
-    f sched toProcess $ Just ret
-
-retryRequest :: AppRequest -> AppContext -> IO ()
-retryRequest r c = unless (requestTries r > 3) $ atomically $ writeTQueue (schedRetryQueue $ app_sched c) r
-
-incReqeust :: AppRequest -> Int -> AppRequest
-incReqeust (AppRequest u b m t c cb) s = AppRequest u b m (t+1) (s:c) cb
-
--- Processing AppRequests
-processRequest :: AppContext -> AppRequest -> Maybe (TQueue AppRequest) -> IO ()
-processRequest ctx req retry = do
-    case requestMethod req of
-        GET -> do
-            pReq    <- parseRequest $ requestUri req
-            manager <- newManager tlsManagerSettings
-            rateLimit $ app_sched ctx
-            resp    <- C.httpLbs pReq manager
-            writeOut ctx $ responseBody resp
-            callback ctx req retry (responseBody resp) (statusCode $ responseStatus resp)
-            where callback = requestCallback req
-        _ -> undefined -- TODO: Handle other methods
-
-getNestedRequests :: (TVar [a] -> Settings -> c -> AppRequest) -> [c] -> AppContext -> IO [a]
-getNestedRequests makeRequest applyList ctx = do
-    results      <- atomically $ newTVar []
-    let requests    = map (makeRequest results (app_sett ctx)) applyList
-        threadCount = num_request_threads $ app_sett ctx
-    mapM_ (writeOut ctx) $ map requestUri requests
-    requestQueue <- atomically $ newTQueue
-    retryQueue   <- atomically $ newTQueue
-    addTraverseToTQueueSync requests requestQueue
-    requestThreads <- replicateM threadCount $ forkIO $ processTQueueRetry ctx (\_ -> requestQueue) (processRequest) retryQueue
-    retryThreads   <- replicateM threadCount $ forkIO $ processTQueueRetry ctx (\_ -> retryQueue) (processRequest) retryQueue
-    let threads = requestThreads ++ retryThreads
-    waiter <- async $ atomically $ do
-        empty1 <- isEmptyTQueue requestQueue
-        empty2 <- isEmptyTQueue retryQueue
-        unless (all (==True) [empty1, empty2]) retry
-        return ()
-    catch
-        (wait waiter)
-        (\e -> do
-            writeOut ctx (e :: AsyncException)
-            mapM_ killThread threads
-        )
-    mapM_ killThread threads
-    atomically $ readTVar results
+incReqeust :: QueueRequest -> Int -> QueueRequest
+incReqeust (QueueRequest u b m t c tm cb) s = QueueRequest u b m (t+1) (s:c) tm cb

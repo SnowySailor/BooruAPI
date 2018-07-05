@@ -10,71 +10,58 @@ import Control.Monad
 import Network.HTTP.Client as C
 import Network.HTTP.Conduit
 import Network.HTTP.Types.Status
---import Control.Concurrent.STM.MonadIO (modifyTMVar_)
-
-data RequestQueues = RequestQueues {
-    requestQueuesMain  :: TBQueue QueueRequest,
-    requestQueuesRetry :: TQueue QueueRequest,
-    requestRateLimiter :: Maybe RateLimiter,
-    requestInProgress  :: TMVar Int
-}
-
-data QueueResponse = QueueResponse {
-    queueResponseBody   :: ByteString,
-    queueResponseStatus :: Int
-}
-
-data QueueRequest = QueueRequest {
-    requestUri      :: String,
-    requestBody     :: Maybe ByteString,
-    requestMethod   :: HTTPMethod,
-    requestTries    :: Int,
-    requestCodes    :: [Int],
-    requestTriesMax :: Int,
-    requestCallback :: RequestQueues -> QueueRequest -> QueueResponse -> IO ()
-}
-
-type RateLimiter = TBQueue ()
 
 -- Processing queues
-processTBQueue :: RequestQueues -> TBQueue a -> (RequestQueues -> a -> IO b) -> IO b
-processTBQueue rq q f = forever $ do
+processTBQueue :: (Num d) => a -> TBQueue b -> (a -> b -> IO c) -> Maybe (TMVar d) -> IO c
+processTBQueue rq q f mip = forever $ do
     bracket
         -- "Aquire": Get the next value from the queue
         (
             atomically $ do
                 value <- readTBQueue q
-                orig <- takeTMVar (requestInProgress rq)
-                putTMVar (requestInProgress rq) $ orig+1
+                case mip of
+                    Just ip -> do
+                        orig <- takeTMVar ip
+                        putTMVar ip $ orig+1
+                    Nothing -> return ()
                 return value
         )
         -- "Release": Decrement the count for in progress
         (
             \_ -> atomically $ do
-                orig <- takeTMVar (requestInProgress rq)
-                putTMVar (requestInProgress rq) $ orig-1
+                case mip of
+                    Just ip -> do
+                        orig <- takeTMVar ip
+                        putTMVar ip $ orig-1
+                    Nothing -> return ()
         )
         -- "In-between": Process the value and return the result
         (
             \toProcess -> f rq toProcess
         )
 
-processTQueue :: RequestQueues -> TQueue a -> (RequestQueues -> a -> IO b) -> IO b
-processTQueue rq q f = forever $ do
+processTQueue :: (Num d) => a -> TQueue b -> (a -> b -> IO c) -> Maybe (TMVar d) -> IO c
+processTQueue rq q f mip = forever $ do
     bracket
         -- "Aquire": Get the next value from the queue
         (
             atomically $ do
                 value <- readTQueue q
-                orig <- takeTMVar (requestInProgress rq)
-                putTMVar (requestInProgress rq) $ orig+1
+                case mip of
+                    Just ip -> do
+                        orig <- takeTMVar ip
+                        putTMVar ip $ orig+1
+                    Nothing -> return ()
                 return value
         )
         -- "Release": Decrement the count for in progress
         (
             \_ -> atomically $ do
-                orig <- takeTMVar (requestInProgress rq)
-                putTMVar (requestInProgress rq) $ orig-1
+                case mip of
+                    Just ip -> do
+                        orig <- takeTMVar ip
+                        putTMVar ip $ orig-1
+                    Nothing -> return ()
         )
         -- "In-between": Process the value and return the result
         (
@@ -152,8 +139,8 @@ doRequests' threadCount requests results rl = do
 
     -- Create the threads
     addThread      <- forkIO $ addTraverseToTBQueue requests (requestQueuesMain context) rCompleted
-    requestThreads <- replicateM threadCount $ forkIO $ processTBQueue context (requestQueuesMain context) processRequest
-    retryThreads   <- replicateM threadCount $ forkIO $ processTQueue context (requestQueuesRetry context) processRequest
+    requestThreads <- replicateM threadCount $ forkIO $ processTBQueue context (requestQueuesMain context) processRequest $ Just (requestInProgress context)
+    retryThreads   <- replicateM threadCount $ forkIO $ processTQueue context (requestQueuesRetry context) processRequest $ Just (requestInProgress context)
     let threads = [addThread] ++ requestThreads ++ retryThreads
 
     -- Wait for everything to be complete

@@ -18,13 +18,14 @@ import GHC.Word
 
 -- Types
 
-type PageNo    = Int
-type ImageId   = Int
-type CommentId = Int
-type TagId     = Int
-type AwardId   = Int
-type UserId    = Int
-type Username  = String
+type PageNo      = Int
+type ImageId     = Int
+type CommentId   = Int
+type TagId       = Int
+type AwardId     = Int
+type UserId      = Int
+type Username    = String
+type RateLimiter = TBQueue ()
 
 -- Datas
 
@@ -119,6 +120,28 @@ data Link = Link {
     link_state      :: String
 } | NullLink deriving (Show)
 
+data RequestQueues = RequestQueues {
+    requestQueuesMain  :: TBQueue QueueRequest,
+    requestQueuesRetry :: TQueue QueueRequest,
+    requestRateLimiter :: Maybe RateLimiter,
+    requestInProgress  :: TMVar Int
+}
+
+data QueueResponse = QueueResponse {
+    queueResponseBody   :: ByteString,
+    queueResponseStatus :: Int
+}
+
+data QueueRequest = QueueRequest {
+    requestUri      :: String,
+    requestBody     :: Maybe ByteString,
+    requestMethod   :: HTTPMethod,
+    requestTries    :: Int,
+    requestCodes    :: [Int],
+    requestTriesMax :: Int,
+    requestCallback :: RequestQueues -> QueueRequest -> QueueResponse -> IO ()
+}
+
 data DatabaseCredentials = DatabaseCredentials {
     db_host     :: String,
     db_port     :: Word16,
@@ -148,33 +171,10 @@ data Settings = Settings {
     max_retry_count     :: Int
 } deriving (Show)
 
--- data AppRequest = AppRequest {
---     requestUri      :: String,
---     requestBody     :: Maybe ByteString,
---     requestMethod   :: HTTPMethod,
---     requestTries    :: Int,
---     requestCodes    :: [Int],
---     requestCallback :: AppContext -> AppRequest -> ByteString -> Int -> IO (),
---     requestRetry    :: Maybe (AppRequest -> IO ())
--- }
-
 data Scheduler = Scheduler {
     schedRateLimiter :: TBQueue (),
     schedReqPerSec   :: Double,
     schedOut         :: TQueue String
-}
-
--- data RequestQueueContext a = RequestQueueContext {
---     requestMainQueue  :: TBQueue AppRequest,
---     requestRetryQueue :: TQueue AppRequest,
---     requestInProgress :: TMVar Int
--- }
-
-data AppContext = AppContext {
-    app_sett     :: Settings,
-    app_sched    :: Scheduler,
-    app_db_creds :: DatabaseCredentials,
-    app_db_pool  :: Pool Connection
 }
 
 -- Classes
