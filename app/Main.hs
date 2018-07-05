@@ -45,9 +45,7 @@ main = do
 
     -- START TASKS --
 
-    -- Flags for when image/user/output queuing is complete
-    iComplete <- atomically $ newTMVar ()
-    uComplete <- atomically $ newTMVar ()
+    -- Flags for when output queuing is complete
     oComplete <- atomically $ newTMVar 0
 
     -- Start all necessary loader/output/rate-limiting threads
@@ -61,11 +59,9 @@ main = do
 
     -- Create async waiter
     waiter <- async $ atomically $ do
-        empty1 <- isEmptyTMVar iComplete
-        empty2 <- isEmptyTMVar uComplete
-        ipOut  <- takeTMVar    oComplete
+        ipOut  <- takeTMVar oComplete
         -- If all are empty, then the run is complete
-        unless (all (==True) [empty1, empty2, (ipOut==0)]) retry
+        unless (all (==True) [(ipOut==0)]) retry
         return ()
 
     writeOut out "Running..."
@@ -77,7 +73,7 @@ main = do
             putStrLn "Killed threads"
             return ()
         )
-    threadDelay 10000000
+
     -- Kill all the threads
     mapM_ killThread threads
     putStrLn "Completed."
