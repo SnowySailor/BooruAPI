@@ -12,7 +12,7 @@ import Network.HTTP.Conduit
 import Network.HTTP.Types.Status
 
 -- Processing queues
-processTBQueue :: (Num d) => a -> TBQueue b -> (a -> b -> IO c) -> Maybe (TMVar d) -> IO c
+processTBQueue :: a -> TBQueue b -> (a -> b -> IO c) -> Maybe (TMVar Int) -> IO c
 processTBQueue rq q f mip = forever $ do
     bracket
         -- "Aquire": Get the next value from the queue
@@ -40,7 +40,7 @@ processTBQueue rq q f mip = forever $ do
             \toProcess -> f rq toProcess
         )
 
-processTQueue :: (Num d) => a -> TQueue b -> (a -> b -> IO c) -> Maybe (TMVar d) -> IO c
+processTQueue :: a -> TQueue b -> (a -> b -> IO c) -> Maybe (TMVar Int) -> IO c
 processTQueue rq q f mip = forever $ do
     bracket
         -- "Aquire": Get the next value from the queue
@@ -106,23 +106,23 @@ addTraverseToTQueue l q c = do
     -- Notify that we've completed the task
     atomically $ takeTMVar c
 
-doRequestsMulti :: [QueueRequest] -> TMVar a -> Maybe RateLimiter -> Int -> IO a
+doRequestsMulti :: [QueueRequest] -> TVar a -> Maybe RateLimiter -> Int -> IO a
 doRequestsMulti a b c d = doRequests' d a b c
 
-doRequests :: [QueueRequest] -> TMVar a -> Maybe RateLimiter -> IO a
+doRequests :: [QueueRequest] -> TVar a -> Maybe RateLimiter -> IO a
 doRequests = doRequests' 1
 
-makeAndDoRequestsMulti :: (TMVar a -> b -> QueueRequest) -> [b] -> TMVar a -> Maybe RateLimiter -> Int -> IO a
+makeAndDoRequestsMulti :: (TVar a -> b -> QueueRequest) -> [b] -> TVar a -> Maybe RateLimiter -> Int -> IO a
 makeAndDoRequestsMulti makeRequest l results rl t = 
     doRequests' t requests results rl
     where requests = map (makeRequest results) l
 
-makeAndDoRequests :: (TMVar a -> b -> QueueRequest) -> [b] -> TMVar a -> Maybe RateLimiter -> IO a
+makeAndDoRequests :: (TVar a -> b -> QueueRequest) -> [b] -> TVar a -> Maybe RateLimiter -> IO a
 makeAndDoRequests makeRequest l results =
     doRequests' 1 requests results
     where requests = map (makeRequest results) l
 
-doRequests' :: Int -> [QueueRequest] -> TMVar a -> Maybe RateLimiter -> IO a
+doRequests' :: Int -> [QueueRequest] -> TVar a -> Maybe RateLimiter -> IO a
 doRequests' threadCount requests results rl = do
     -- Spawn new STM variables
     context <- atomically $ do
@@ -158,4 +158,4 @@ doRequests' threadCount requests results rl = do
             mapM_ killThread threads
         )
     mapM_ killThread threads
-    atomically $ readTMVar results
+    atomically $ readTVar results

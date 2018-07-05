@@ -10,6 +10,7 @@ import Data.ByteString.Lazy (ByteString)
 import Control.Concurrent
 import Control.Monad
 import Processing
+import RequestQueues
 
 -- Images
 
@@ -18,28 +19,37 @@ getImage i s = do
     (imageData, status) <- getImageJSON i s
     return (decodeNoMaybe imageData, status)
 
--- getImageComments :: ImageId -> Int -> AppContext -> IO [CommentPage]
--- getImageComments i count ctx = do
---     let (p, _) = divMod count $ comments_per_page $ app_sett ctx
---     getNestedRequests (\x y -> makeCommentPageRequest x y i) [1..p] ctx
+-- Comments
 
--- -- Comments
+getImageComments :: ImageId -> Int -> Settings -> TQueue String -> IO [CommentPage]
+getImageComments a b c d = getImageComments' a b c d Nothing
 
--- handleCommentPageResponse :: TVar [CommentPage] -> AppContext -> AppRequest -> Maybe (TQueue AppRequest) -> ByteString -> Int -> IO ()
--- handleCommentPageResponse t ctx req retry bs s = 
---     if s >= 200 && s < 300 then do
---         atomically $ do
---             let page = decodeNoMaybe bs
---             v <- readTVar t
---             writeTVar t $ page:v
---     else do
---         case retry of
---             Just a -> addToTQueue (incReqeust req s) a
---             Nothing -> return ()
+getImageCommentsRL :: ImageId -> Int -> Settings -> TQueue String -> RateLimiter -> IO [CommentPage]
+getImageCommentsRL a b c d e = getImageComments' a b c d $ Just e
 
--- makeCommentPageRequest :: TVar [CommentPage] -> Settings -> ImageId -> PageNo -> AppRequest
--- makeCommentPageRequest t s i p = AppRequest uri Nothing GET 0 [] $ handleCommentPageResponse t
---     where uri = commentsAPI i p s
+getImageComments' :: ImageId -> Int -> Settings -> TQueue String -> Maybe RateLimiter -> IO [CommentPage]
+getImageComments' i count s out rl = do
+    results <- atomically $ newTVar []
+    let (p, _) = divMod count $ comments_per_page s
+        requests = map (\page -> makeCommentPageRequest s out i page results) [1..p]
+    doRequests requests results rl
+
+handleCommentPageResponse :: TQueue String -> TVar [CommentPage] -> RequestQueues -> QueueRequest -> QueueResponse -> IO ()
+handleCommentPageResponse out results rq req resp = 
+    if status >= 200 && status < 300 then do
+        atomically $ do
+            let page = decodeNoMaybe $ queueResponseBody resp
+            v <- readTVar results
+            writeTVar results $ page:v
+    else do
+        handleBadResponse out rq req resp
+    where status = queueResponseStatus resp
+
+makeCommentPageRequest :: Settings -> TQueue String -> ImageId -> PageNo -> TVar [CommentPage] -> QueueRequest
+makeCommentPageRequest s out image page results = QueueRequest uri Nothing GET 0 [] (max_retry_count s) $ handleCommentPageResponse out results
+    where uri = commentsAPI image page s
+
+-- Simple comments
 
 getImageCommentsSimple :: ImageId -> Int -> Settings -> IO [Comment]
 getImageCommentsSimple i count s = do
@@ -64,38 +74,47 @@ getUserByName n s = do
     (json, status) <- getUserJSON (encode n) s
     return $ (decodeNoMaybe json, status)
 
--- handleSearchPageResponse :: TVar [SearchPage] -> AppContext -> AppRequest -> Maybe (TQueue AppRequest) -> ByteString -> Int -> IO ()
--- handleSearchPageResponse t ctx req retry bs s = do
---     if s >= 200 && s < 300 then do
---         atomically $ do
---             let page = decodeNoMaybe bs
---             v <- readTVar t
---             writeTVar t $ page:v
---     else do
---         case retry of
---             Just a -> addToTQueue (incReqeust req s) a
---             Nothing -> return ()
+getUserFavorites :: Username -> Settings -> TQueue String -> IO [ImageId]
+getUserFavorites a b c = getUserFavorites' a b c Nothing
 
--- getUserFavorites :: Username -> AppContext -> IO [ImageId]
--- getUserFavorites u ctx = do
---     x <- getNestedRequests (\x y -> makeSearchPageRequest x y q) [1] ctx
---     case x of
---         []  -> return []
---         x:_ ->
---             case x of
---                 NullSearchPage -> do
---                     writeOut ctx $ "Got NullSearchPage for first page"
---                     return []
---                 SearchPage c _ -> do
---                     let totalCount = c
---                         (p, _) = divMod totalCount $ (images_per_page . app_sett) ctx
---                     restOfUserFaves <- getNestedRequests (\x y -> makeSearchPageRequest x y q) [2..p] ctx
---                     return . map getImageId . flatten . map getSearchImages $ x:(filterNulls $ restOfUserFaves)
---     where q = "faved_by:" ++ u
+getUserFavoritesRL :: Username -> Settings -> TQueue String -> RateLimiter -> IO [ImageId]
+getUserFavoritesRL a b c d = getUserFavorites' a b c $ Just d
 
--- makeSearchPageRequest :: TVar [SearchPage] -> Settings -> String -> PageNo -> AppRequest
--- makeSearchPageRequest t s q p = AppRequest uri Nothing GET 0 [] $ handleSearchPageResponse t
---     where uri = searchAPI q p s
+getUserFavorites' :: Username -> Settings -> TQueue String -> Maybe RateLimiter -> IO [ImageId]
+getUserFavorites' name s out rl = do
+    results <- atomically $ newTVar []
+
+    let fReq = [makeSearchPageRequest s out q 1 results]
+    firstPage <- doRequests fReq results rl
+    case firstPage of
+        []  -> return []
+        page:_ ->
+            case page of
+                NullSearchPage -> do
+                    writeOut out "Got NullSearchPage for first page"
+                    return []
+                SearchPage c _ -> do
+                    let totalCount = c
+                        (p, _) = divMod totalCount $ images_per_page s
+                        requests = map (\p -> makeSearchPageRequest s out q p results) [2..p]
+                    restOfUserFaves <- doRequests requests results rl
+                    return . map getImageId . flatten . map getSearchImages $ page:(filterNulls $ restOfUserFaves)
+    where q = "faved_by:" ++ name
+
+handleSearchPageResponse :: TQueue String -> TVar [SearchPage] -> RequestQueues -> QueueRequest -> QueueResponse -> IO ()
+handleSearchPageResponse out results rq req resp = do
+    if status >= 200 && status < 300 then do
+        atomically $ do
+            let page = decodeNoMaybe $ queueResponseBody resp
+            v <- readTVar results
+            writeTVar results $ page:v
+    else do
+        handleBadResponse out rq req resp
+    where status = queueResponseStatus resp
+
+makeSearchPageRequest :: Settings -> TQueue String -> String -> PageNo -> TVar [SearchPage] -> QueueRequest
+makeSearchPageRequest s out q p results = QueueRequest uri Nothing GET 0 [] (max_retry_count s) $ handleSearchPageResponse out results
+    where uri = searchAPI q p s
 
 -- Tags
 
@@ -115,3 +134,24 @@ getSearchPage :: String -> Int -> Settings -> IO (SearchPage, Int)
 getSearchPage q i s = do
     (json, status) <- getSearchJSON q i s
     return $ (decodeNoMaybe json, status)
+
+handleBadResponse :: TQueue String -> RequestQueues -> QueueRequest -> QueueResponse -> IO ()
+handleBadResponse out rq req resp = do
+    if status >= 300 && status < 400 then
+        writeOut out $ "Got " ++ show status ++ " at " ++ (requestUri req) ++ ". Not retrying."
+    else if status >= 400 && status < 500 then
+        case status of
+            400 -> unless (requestTries req >= max_retries) $ do
+                        writeOut out $ "Got 400 at " ++ (requestUri req) ++ ". Retrying."
+                        retryRequest req resp rq
+            _   -> writeOut out $ "Got " ++ show status ++ " at " ++ (requestUri req) ++ ". Not retrying."
+    else if status >= 500 && status < 600 then
+        case status of
+            500 -> unless (requestTries req >= max_retries) $ do
+                        writeOut out $ "Got 500 at " ++ (requestUri req) ++ ". Retrying."
+                        retryRequest req resp rq
+            _   -> writeOut out $ "Got " ++ show status ++ " at " ++ (requestUri req) ++ ". Not retrying."
+    else
+        writeOut out $ "Got " ++ show status ++ " at " ++ (requestUri req) ++ ". Not retrying."
+    where max_retries = requestTriesMax req
+          status = queueResponseStatus resp

@@ -29,13 +29,10 @@ main = do
     resource <- defaultResources
     pool     <- getPool resource (db_database creds)
 
-
-    -- Create new request, retry, rate-limit, and results variables
-    rq      <- atomically $ newTBQueue $ (*) 2 $ num_request_threads settings
-    retq    <- atomically $ newTQueue
+    -- Create new rate-limit, output, and results
     rl      <- atomically $ newTBQueue $ (*) 2 $ num_request_threads settings
     out     <- atomically $ newTQueue
-    results <- atomically $ newTMVar []
+    results <- atomically $ newTVar []
 
     -- Create necessary data
     let imageList    = map (makeImageRequest settings out) [(load_image_start settings)..(load_image_end settings)]
@@ -50,7 +47,10 @@ main = do
 
     -- Start all necessary loader/output/rate-limiting threads
     dripSemThread <- forkIO $ dripSem rl (requests_per_second settings)
-    outThread     <- forkIO $ processTQueue 0 out handleOut $ Just oComplete
+    outThread     <- forkIO $ processTQueue () out handleOut $ Just oComplete
+
+    -- Being program
+    writeOut out "Running..."
     complete      <- doRequestsMulti combinedList results (Just rl) threadCount
     
     -- END START TASKS --
@@ -64,7 +64,6 @@ main = do
         unless (all (==True) [(ipOut==0)]) retry
         return ()
 
-    writeOut out "Running..."
     catch
         (wait waiter) -- Wait on all queues to be empty
         (\e -> do
@@ -79,18 +78,18 @@ main = do
     putStrLn "Completed."
 
 -- Handling
-handleOut :: Int -> String -> IO ()
+handleOut :: () -> String -> IO ()
 handleOut _ s = putStrLn s
 
-handleImageResponse :: TQueue String -> RequestQueues -> QueueRequest -> QueueResponse -> IO ()
-handleImageResponse out rq req resp = do
+handleImageResponse :: Settings -> TQueue String -> RequestQueues -> QueueRequest -> QueueResponse -> IO ()
+handleImageResponse sett out rq req resp = do
     writeOut out $ "Handling image. Got " ++ show status
     if status >= 200 && status < 300 then do
         case image of
             Image i -> do
-                -- when (load_full_images $ app_sett ctx) $ do
-                --     comments <- getImageComments (image_id i) (image_comment_count i) ctx
-                --     writeOut out comments
+                when (load_full_images sett) $ do
+                    comments <- getImageComments' (image_id i) (image_comment_count i) sett out (requestRateLimiter rq)
+                    writeOut out $ show comments
                 writeOut out $ show image
             DuplicateImage i -> writeOut out $ show image
             DeletedImage i -> writeOut out $ show image
@@ -100,15 +99,15 @@ handleImageResponse out rq req resp = do
     where image = decodeNoMaybe $ queueResponseBody resp
           status = queueResponseStatus resp
 
-handleUserResponse :: TQueue String -> RequestQueues -> QueueRequest -> QueueResponse -> IO ()
-handleUserResponse out rq req resp = do
+handleUserResponse :: Settings -> TQueue String -> RequestQueues -> QueueRequest -> QueueResponse -> IO ()
+handleUserResponse sett out rq req resp = do
     writeOut out $ "Handling user. Got " ++ show status
     if status >= 200 && status < 300 then do
         case user of
             User{} -> do
-                -- when (load_full_users $ app_sett ctx) $ do
-                --     faves <- getUserFavorites (user_name user) ctx
-                --     writeOut ctx faves
+                when (load_full_users sett) $ do
+                    faves <- getUserFavorites' (user_name user) sett out (requestRateLimiter rq)
+                    writeOut out $ show faves
                 writeOut out $ show user
             NullUser -> writeOut out $ show user
             _  -> writeOut out "Uh oh"
@@ -117,39 +116,18 @@ handleUserResponse out rq req resp = do
     where user = decodeNoMaybe $ queueResponseBody resp
           status = queueResponseStatus resp
 
-handleTagPageResponse :: TQueue String -> RequestQueues -> QueueRequest -> QueueResponse -> IO ()
-handleTagPageResponse out rq req resp = do
+handleTagPageResponse :: Settings -> TQueue String -> RequestQueues -> QueueRequest -> QueueResponse -> IO ()
+handleTagPageResponse sett out rq req resp = do
     writeOut out $ "Handling tag page. Got " ++ (show $ queueResponseStatus resp)
 
-handleBadResponse :: TQueue String -> RequestQueues -> QueueRequest -> QueueResponse -> IO ()
-handleBadResponse out rq req resp = do
-    if status >= 300 && status < 400 then
-        writeOut out $ "Got " ++ show status ++ " at " ++ (requestUri req) ++ ". Not retrying."
-    else if status >= 400 && status < 500 then
-        case status of
-            400 -> unless (requestTries req >= max_retries) $ do
-                        writeOut out $ "Got 400 at " ++ (requestUri req) ++ ". Retrying."
-                        retryRequest req resp rq
-            _   -> writeOut out $ "Got " ++ show status ++ " at " ++ (requestUri req) ++ ". Not retrying."
-    else if status >= 500 && status < 600 then
-        case status of
-            500 -> unless (requestTries req >= max_retries) $ do
-                        writeOut out $ "Got 500 at " ++ (requestUri req) ++ ". Retrying."
-                        retryRequest req resp rq
-            _   -> writeOut out $ "Got " ++ show status ++ " at " ++ (requestUri req) ++ ". Not retrying."
-    else
-        writeOut out $ "Got " ++ show status ++ " at " ++ (requestUri req) ++ ". Not retrying."
-    where max_retries = requestTriesMax req
-          status = queueResponseStatus resp
-
 makeImageRequest :: Settings -> TQueue String -> ImageId -> QueueRequest
-makeImageRequest s out i = QueueRequest uri Nothing GET 0 [] (max_retry_count s) $ handleImageResponse out
+makeImageRequest s out i = QueueRequest uri Nothing GET 0 [] (max_retry_count s) $ handleImageResponse s out
     where uri = imageAPI i s
 
 makeUserRequest :: Settings -> TQueue String -> UserId -> QueueRequest
-makeUserRequest s out u = QueueRequest uri Nothing GET 0 [] (max_retry_count s) $ handleUserResponse out
+makeUserRequest s out u = QueueRequest uri Nothing GET 0 [] (max_retry_count s) $ handleUserResponse s out
     where uri = userAPI u s
 
 makeTagPageRequest :: Settings -> TQueue String -> PageNo -> QueueRequest
-makeTagPageRequest s out p = QueueRequest uri Nothing GET 0 [] (max_retry_count s) $ handleTagPageResponse out
+makeTagPageRequest s out p = QueueRequest uri Nothing GET 0 [] (max_retry_count s) $ handleTagPageResponse s out
     where uri = tagsAPI p s
