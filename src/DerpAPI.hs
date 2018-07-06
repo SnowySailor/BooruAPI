@@ -28,14 +28,17 @@ getImageCommentsRL :: ImageId -> Int -> Settings -> OutQueue -> RateLimiter -> I
 getImageCommentsRL a b c d e = getImageComments' a b c d $ Just e
 
 getImageComments' :: ImageId -> Int -> Settings -> OutQueue -> Maybe RateLimiter -> IO [CommentPage]
-getImageComments' i count s out rl = do
-    results <- atomically $ newTVar []
-    let (p, _) = divMod count $ comments_per_page s
-        requests = map (\page -> makeCommentPageRequest s out i page results) [1..p+1]
-    doRequests requests results rl
+getImageComments' i count s out rl =
+    if count > 0 then do
+        results <- atomically $ newTVar []
+        let (p, _) = divMod count $ comments_per_page s
+            requests = map (\page -> makeCommentPageRequest s out i page results) [1..p+1]
+        doRequests requests results rl
+    else do
+        return []
 
 handleCommentPageResponse :: OutQueue -> TVar [CommentPage] -> RequestQueues -> QueueRequest -> QueueResponse -> IO ()
-handleCommentPageResponse out results rq req resp = 
+handleCommentPageResponse out results rq req resp =
     if status >= 200 && status < 300 then do
         atomically $ do
             let page = decodeNoMaybe $ queueResponseBody resp
@@ -93,13 +96,16 @@ getUserFavorites' name s out rl = do
                 NullSearchPage -> do
                     writeOut out "Got NullSearchPage for first page"
                     return []
-                SearchPage c _ -> do
-                    let totalCount = c
-                        (p, _) = divMod totalCount $ images_per_page s
-                        requests = map (\p -> makeSearchPageRequest s out q p results) [2..p]
-                    restOfUserFaves <- doRequests requests results rl
-                    return . map getImageId . flatten . map getSearchImages $ page:(filterNulls $ restOfUserFaves)
+                SearchPage c _ ->
+                    if c > per_page then do
+                        let (p, _) = divMod c per_page
+                            requests = map (\p -> makeSearchPageRequest s out q p results) [2..p+1]
+                        restOfUserFaves <- doRequests requests results rl
+                        return . map getImageId . flatten . map getSearchImages $ page:(filterNulls $ restOfUserFaves)
+                    else do
+                        return []
     where q = "faved_by:" ++ name
+          per_page = images_per_page s
 
 handleSearchPageResponse :: OutQueue -> TVar [SearchPage] -> RequestQueues -> QueueRequest -> QueueResponse -> IO ()
 handleSearchPageResponse out results rq req resp = do

@@ -21,18 +21,17 @@ handleImageResponse sett pool schema out rq req resp = do
                 when (load_full_images sett) $ do
                     comments <- getImageComments' (image_id i) (image_comment_count i) sett out (requestRateLimiter rq)
                     loaded <- withResource pool $ \conn -> loadComments (flatten $ map getCommentsFromPage comments) conn schema
-                    writeOut out $ show loaded
-                loaded <- withResource pool $ \conn -> loadImage image conn schema out
-                writeOut out $ show loaded
+                    writeOut out $ "Load image " ++ show (image_id i) ++ " comments: " ++ show loaded ++ " comments."
+                (d,t) <- withResource pool $ \conn -> loadImage image conn schema out
+                writeOut out $ "Load image " ++ show (image_id i) ++ ": " ++ show d ++ " data, " ++ show t ++ " tags."
             DuplicateImage i -> do
-                loaded <- withResource pool $ \conn -> loadImage image conn schema out
-                writeOut out $ show loaded
+                (d,t) <- withResource pool $ \conn -> loadImage image conn schema out
+                writeOut out $ "Load duplicate image " ++ show (duplicate_image_id i) ++ ": " ++ show d ++ " data, " ++ show t ++ " tags."
             DeletedImage i -> do
-                loaded <- withResource pool $ \conn -> loadImage image conn schema out
-                writeOut out $ show loaded
+                (d,t) <- withResource pool $ \conn -> loadImage image conn schema out
+                writeOut out $ "Load deleted image " ++ show (deleted_image_id i) ++ ": " ++ show d ++ " data, " ++ show t ++ " tags."
             NullImage -> writeOut out $ "Null image at " ++ requestUri req
     else do
-        writeOut out $ "Got " ++ show status ++ " at " ++ requestUri req
         handleBadResponse out rq req resp
     where image = decodeNoMaybe $ queueResponseBody resp
           status = queueResponseStatus resp
@@ -45,13 +44,12 @@ handleUserResponse sett pool schema out rq req resp = do
                 when (load_full_users sett) $ do
                     faves <- getUserFavorites' (user_name user) sett out (requestRateLimiter rq)
                     loaded <- withResource pool $ \conn -> loadUserFavorites (user_id user) faves conn schema out
-                    writeOut out $ show loaded
-                loaded <- withResource pool $ \conn -> loadUser user conn schema out
-                writeOut out $ show loaded
+                    writeOut out $ "Load user " ++ show (user_id user) ++ " faves: " ++ show loaded ++ " faves."
+                (d,a,l) <- withResource pool $ \conn -> loadUser user conn schema out
+                writeOut out $ "Load user " ++ show (user_id user) ++ ": " ++ show d ++ " data, " ++ show a ++ " awards, " ++ show l ++ " links."
             NullUser -> writeOut out $ "Null user at " ++ requestUri req
             _  -> writeOut out "Uh oh"
     else do
-        writeOut out $ "Got " ++ show status ++ " at " ++ requestUri req
         handleBadResponse out rq req resp
     where user = decodeNoMaybe $ queueResponseBody resp
           status = queueResponseStatus resp
@@ -62,10 +60,9 @@ handleTagPageResponse sett pool schema out rq req resp = do
         case page of
             TagPage t -> do
                 loaded <- withResource pool $ \conn -> loadTags t conn schema out
-                writeOut out $ show loaded
+                writeOut out $ "Load tag page: " ++ show (length loaded) ++ " tags."
             NullTagPage -> writeOut out $ "Null tag page at " ++ requestUri req ++ ": " ++ (show $ queueResponseBody resp)
     else do
-        writeOut out $ "Got " ++ show status ++ " at " ++ requestUri req
         handleBadResponse out rq req resp
     where page = decodeNoMaybe $ queueResponseBody resp
           status = queueResponseStatus resp

@@ -43,7 +43,7 @@ loadImageData image conn s out =
                                                             image_downvotes image, image_faves image, image_score image, image_comment_count image,
                                                             image_created_at image, image_updated_at image, image_first_seen_at image,
                                                             image_width image, image_height image, image_aspect_ratio image)
-                return (tagsLoaded, dataLoaded)
+                return (dataLoaded, tagsLoaded)
         NullImageData -> do
             writeOut out "loadImageData called on NullImageData"
             return (0, 0)
