@@ -10,63 +10,22 @@ import Control.Monad
 import Network.HTTP.Client as C
 import Network.HTTP.Conduit
 import Network.HTTP.Types.Status
+import Processing
 
--- Processing queues
-processTBQueue :: a -> TBQueue b -> (a -> b -> IO c) -> Maybe (TMVar Int) -> IO c
-processTBQueue rq q f mip = forever $ do
-    bracket
-        -- "Aquire": Get the next value from the queue
-        (
-            atomically $ do
-                value <- readTBQueue q
-                case mip of
-                    Just ip -> do
-                        orig <- takeTMVar ip
-                        putTMVar ip $ orig+1
-                    Nothing -> return ()
-                return value
-        )
-        -- "Release": Decrement the count for in progress
-        (
-            \_ -> atomically $ do
-                case mip of
-                    Just ip -> do
-                        orig <- takeTMVar ip
-                        putTMVar ip $ orig-1
-                    Nothing -> return ()
-        )
-        -- "In-between": Process the value and return the result
-        (
-            \toProcess -> f rq toProcess
-        )
+-- Rate limiting
+dripSem :: (RealFrac a) => RateLimiter -> a -> IO ()
+dripSem rl rate = forever $ do
+     -- Write that we have a spot open
+    atomically $ writeTBQueue rl ()
+     -- Wait a certin amount of time before opening a new spot
+    threadDelay $ (*) 1000000 $ floor $ 1/rate
 
-processTQueue :: a -> TQueue b -> (a -> b -> IO c) -> Maybe (TMVar Int) -> IO c
-processTQueue rq q f mip = forever $ do
-    bracket
-        -- "Aquire": Get the next value from the queue
-        (
-            atomically $ do
-                value <- readTQueue q
-                case mip of
-                    Just ip -> do
-                        orig <- takeTMVar ip
-                        putTMVar ip $ orig+1
-                    Nothing -> return ()
-                return value
-        )
-        -- "Release": Decrement the count for in progress
-        (
-            \_ -> atomically $ do
-                case mip of
-                    Just ip -> do
-                        orig <- takeTMVar ip
-                        putTMVar ip $ orig-1
-                    Nothing -> return ()
-        )
-        -- "In-between": Process the value and return the result
-        (
-            \toProcess -> f rq toProcess
-        )
+rateLimitM :: Maybe RateLimiter -> IO ()
+rateLimitM (Just q) = atomically $ readTBQueue q
+rateLimitM Nothing  = return ()
+
+rateLimit :: RateLimiter -> IO ()
+rateLimit q = atomically $ readTBQueue q
 
 processRequest :: RequestQueues -> QueueRequest -> IO ()
 processRequest rq qreq = do
@@ -84,27 +43,6 @@ processRequest rq qreq = do
             callback rq qreq qresp
             where callback = requestCallback qreq
         _ -> undefined -- TODO: Handle other methods
-
-rateLimitM :: Maybe RateLimiter -> IO ()
-rateLimitM (Just q) = atomically $ readTBQueue q
-rateLimitM Nothing  = return ()
-
-rateLimit :: RateLimiter -> IO ()
-rateLimit q = atomically $ readTBQueue q
-
-addTraverseToTBQueue :: (Traversable t) => t a -> TBQueue a -> TMVar b -> IO b
-addTraverseToTBQueue l q c = do
-    -- Perform the write task
-    forM_ l $ \x -> atomically $ writeTBQueue q x
-    -- Notify that we've completed the task
-    atomically $ takeTMVar c
-
-addTraverseToTQueue :: (Traversable t) => t a -> TQueue a -> TMVar b -> IO b
-addTraverseToTQueue l q c = do
-    -- Perform the write task
-    forM_ l $ \x -> atomically $ writeTQueue q x
-    -- Notify that we've completed the task
-    atomically $ takeTMVar c
 
 doRequestsMulti :: [QueueRequest] -> TVar a -> Maybe RateLimiter -> Int -> IO a
 doRequestsMulti a b c d = doRequests' d a b c
@@ -159,3 +97,12 @@ doRequests' threadCount requests results rl = do
         )
     mapM_ killThread threads
     atomically $ readTVar results
+
+retryRequest :: QueueRequest -> QueueResponse -> RequestQueues -> IO ()
+retryRequest req resp rq = unless (requestTries req > requestTriesMax req) $
+    atomically $
+        writeTQueue (requestQueuesRetry rq) nr
+        where nr = incReqeust req $ queueResponseStatus resp
+
+incReqeust :: QueueRequest -> Int -> QueueRequest
+incReqeust (QueueRequest u b m t c tm cb) s = QueueRequest u b m (t+1) (s:c) tm cb

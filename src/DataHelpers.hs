@@ -3,7 +3,6 @@ module DataHelpers where
 import Datas
 import Data.ByteString.Lazy (ByteString)
 import Data.Aeson
-import Control.Concurrent.STM
 
 getImageId :: Image -> ImageId
 getImageId (Image i)          = image_id i
@@ -18,6 +17,10 @@ getSearchImages _                = []
 getTagPageTags :: TagPage -> [Tag]
 getTagPageTags (TagPage t) = t
 getTagPageTags _           = []
+
+getCommentsFromPage :: CommentPage -> [Comment]
+getCommentsFromPage (NullCommentPage) = []
+getCommentsFromPage (CommentPage c)   = c
 
 filterNulls :: (Nullable a) => [a] -> [a]
 filterNulls = filter $ not . isnull

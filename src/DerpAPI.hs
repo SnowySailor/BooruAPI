@@ -135,23 +135,18 @@ getSearchPage q i s = do
     (json, status) <- getSearchJSON q i s
     return $ (decodeNoMaybe json, status)
 
+-- Helper function
 handleBadResponse :: OutQueue -> RequestQueues -> QueueRequest -> QueueResponse -> IO ()
 handleBadResponse out rq req resp = do
-    if status >= 300 && status < 400 then
-        writeOut out $ "Got " ++ show status ++ " at " ++ (requestUri req) ++ ". Not retrying."
-    else if status >= 400 && status < 500 then
+    unless (requestTries req >= max_retries) $ do
         case status of
-            400 -> unless (requestTries req >= max_retries) $ do
-                        writeOut out $ "Got 400 at " ++ (requestUri req) ++ ". Retrying."
-                        retryRequest req resp rq
-            _   -> writeOut out $ "Got " ++ show status ++ " at " ++ (requestUri req) ++ ". Not retrying."
-    else if status >= 500 && status < 600 then
-        case status of
-            500 -> unless (requestTries req >= max_retries) $ do
-                        writeOut out $ "Got 500 at " ++ (requestUri req) ++ ". Retrying."
-                        retryRequest req resp rq
-            _   -> writeOut out $ "Got " ++ show status ++ " at " ++ (requestUri req) ++ ". Not retrying."
-    else
-        writeOut out $ "Got " ++ show status ++ " at " ++ (requestUri req) ++ ". Not retrying."
+            429 -> do
+                writeOut out $ "Got 429 at " ++ requestUri req ++ ". Consider lowering max_requests_per_second."
+                retryRequest req resp rq
+            404 -> do
+                writeOut out $ "Got 404 at " ++ requestUri req ++ "."
+            _   -> do
+                writeOut out $ "Got " ++ show status ++ " at " ++ requestUri req ++ ". Retrying."
+                retryRequest req resp rq
     where max_retries = requestTriesMax req
           status = queueResponseStatus resp

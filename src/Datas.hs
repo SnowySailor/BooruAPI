@@ -77,7 +77,7 @@ data Tag = Tag {
     tag_name              :: String      ,
     tag_slug              :: String      ,
     tag_description       :: String      ,
-    tag_short_desctiption :: String      ,
+    tag_short_description :: String      ,
     tag_aliased_to        :: Maybe TagId ,
     tag_implied_tags      :: [TagId]     ,
     tag_category          :: Maybe String,
@@ -165,6 +165,8 @@ data Settings = Settings {
     load_image_end      :: Int,
     load_user_start     :: Int,
     load_user_end       :: Int,
+    load_tags_start     :: Int,
+    load_tags_end       :: Int,
     load_full_images    :: Bool,
     load_full_users     :: Bool,
     num_request_threads :: Int,
@@ -256,12 +258,12 @@ instance FromJSON CommentPage where
     parseJSON _          = pure NullCommentPage
 
 instance FromJSON TagPage where
-    parseJSON (Object o) = do
-        tags <- parseJSON (Object o)
+    parseJSON o = do
+        tags <- parseJSON o
         return $ case tags of
             Just t  -> TagPage t
             Nothing -> NullTagPage
-    parseJSON _          = pure NullTagPage
+    --parseJSON _          = pure NullTagPage
 
 instance FromJSON Comment where
     parseJSON (Object o) =
@@ -334,9 +336,11 @@ instance FromJSON Settings where
             <*> v .:? "images_per_page"     .!= 50
             <*> v .:? "comments_per_page"   .!= 20
             <*> v .:? "start_image_id"      .!= 0
-            <*> v .:? "end_image_id"        .!= 0
+            <*> v .:? "end_image_id"        .!= (-1)
             <*> v .:? "start_user_id"       .!= 0
-            <*> v .:? "end_user_id"         .!= 0
+            <*> v .:? "end_user_id"         .!= (-1)
+            <*> v .:? "start_tag_page"      .!= 0
+            <*> v .:? "end_tag_page"        .!= (-1)
             <*> v .:? "load_full_images"    .!= False
             <*> v .:? "load_full_users"     .!= False
             <*> v .:? "num_request_threads" .!= 1

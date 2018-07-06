@@ -15,17 +15,6 @@ import DataHelpers
     -- tail call recursion
     -- create a queue for its own thread
 
--- Rate limiting
-dripSem :: (RealFrac a) => RateLimiter -> a -> IO ()
-dripSem rl rate = forever $ do
-     -- Write that we have a spot open
-    atomically $ writeTBQueue rl ()
-     -- Wait a certin amount of time before opening a new spot
-    threadDelay $ (*) 1000000 $ floor $ 1/rate
-
-writeOut :: (Show a) => TQueue a -> a -> IO ()
-writeOut q e = atomically $ writeTQueue q e
-
 -- Adding to queues
 
 -- Meant to be used asynchronously. It will notify the caller when complete by taking the TMVar passed
@@ -74,11 +63,59 @@ writeTBQueueM mQ e =
         Just q -> atomically $ writeTBQueue q e
         Nothing -> return ()
 
-retryRequest :: QueueRequest -> QueueResponse -> RequestQueues -> IO ()
-retryRequest req resp rq = unless (requestTries req > requestTriesMax req) $
-    atomically $
-        writeTQueue (requestQueuesRetry rq) nr
-        where nr = incReqeust req $ queueResponseStatus resp
+-- Processing queues
+processTBQueue :: a -> TBQueue b -> (a -> b -> IO c) -> Maybe (TMVar Int) -> IO c
+processTBQueue rq q f mip = forever $ do
+    bracket
+        -- "Aquire": Get the next value from the queue
+        (
+            atomically $ do
+                value <- readTBQueue q
+                case mip of
+                    Just ip -> do
+                        orig <- takeTMVar ip
+                        putTMVar ip $ orig+1
+                    Nothing -> return ()
+                return value
+        )
+        -- "Release": Decrement the count for in progress
+        (
+            \_ -> atomically $ do
+                case mip of
+                    Just ip -> do
+                        orig <- takeTMVar ip
+                        putTMVar ip $ orig-1
+                    Nothing -> return ()
+        )
+        -- "In-between": Process the value and return the result
+        (
+            \toProcess -> f rq toProcess
+        )
 
-incReqeust :: QueueRequest -> Int -> QueueRequest
-incReqeust (QueueRequest u b m t c tm cb) s = QueueRequest u b m (t+1) (s:c) tm cb
+processTQueue :: a -> TQueue b -> (a -> b -> IO c) -> Maybe (TMVar Int) -> IO c
+processTQueue rq q f mip = forever $ do
+    bracket
+        -- "Aquire": Get the next value from the queue
+        (
+            atomically $ do
+                value <- readTQueue q
+                case mip of
+                    Just ip -> do
+                        orig <- takeTMVar ip
+                        putTMVar ip $ orig+1
+                    Nothing -> return ()
+                return value
+        )
+        -- "Release": Decrement the count for in progress
+        (
+            \_ -> atomically $ do
+                case mip of
+                    Just ip -> do
+                        orig <- takeTMVar ip
+                        putTMVar ip $ orig-1
+                    Nothing -> return ()
+        )
+        -- "In-between": Process the value and return the result
+        (
+            \toProcess -> f rq toProcess
+        )
