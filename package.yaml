@@ -1,10 +1,10 @@
 name:                DerpHs
 version:             0.1.0.0
-github:              "githubuser/DerpHs"
+github:              "SnowySailor/DerpHs"
 license:             BSD3
-author:              "Author name here"
+author:              "Snow Sailor"
 maintainer:          "example@example.com"
-copyright:           "2018 Author name here"
+copyright:           "2018 Snow Sailor"
 
 extra-source-files:
 - README.md
@@ -51,7 +51,7 @@ library:
   source-dirs: src
 
 executables:
-  DerpHs-exe:
+  DerpHs:
     main:                Main.hs
     source-dirs:         app
     ghc-options:

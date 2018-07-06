@@ -6,10 +6,7 @@ import APIGetter
 import DataHelpers
 import Network.URI.Encode
 import Control.Concurrent.STM
-import Data.ByteString.Lazy (ByteString)
-import Control.Concurrent
 import Control.Monad
-import Processing
 import RequestQueues
 
 -- Images
@@ -99,7 +96,7 @@ getUserFavorites' name s out rl = do
                 SearchPage c _ ->
                     if c > per_page then do
                         let (p, _) = divMod c per_page
-                            requests = map (\p -> makeSearchPageRequest s out q p results) [2..p+1]
+                            requests = map (\pa -> makeSearchPageRequest s out q pa results) [2..p+1]
                         restOfUserFaves <- doRequests requests results rl
                         return . map getImageId . flatten . map getSearchImages $ page:(filterNulls $ restOfUserFaves)
                     else do
@@ -151,6 +148,9 @@ handleBadResponse out rq req resp = do
                 retryRequest req resp rq
             404 -> do
                 writeOut out $ "Got 404 at " ++ requestUri req ++ "."
+            9999 -> do
+                writeOut out $ "Got unexpected exception. Retrying. Exception: " ++ (show $ queueResponseBody resp)
+                retryRequest req resp rq
             _   -> do
                 writeOut out $ "Got " ++ show status ++ " at " ++ requestUri req ++ ". Retrying."
                 retryRequest req resp rq

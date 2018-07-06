@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedStrings #-}
 module RequestQueues where
 
 import Datas
@@ -5,8 +6,8 @@ import Control.Exception
 import Control.Concurrent
 import Control.Concurrent.STM
 import Control.Concurrent.Async
-import Data.ByteString.Lazy (ByteString)
 import Control.Monad
+import Data.ByteString.Lazy.Char8 (pack)
 import Network.HTTP.Client as C
 import Network.HTTP.Conduit
 import Network.HTTP.Types.Status
@@ -37,8 +38,14 @@ processRequest rq qreq = do
             -- Rate limit
             rateLimitM $ requestRateLimiter rq
             -- Perform request
-            resp <- C.httpLbs pReq manager
-            let qresp = QueueResponse { queueResponseBody = responseBody resp, queueResponseStatus = statusCode $ responseStatus resp }
+            resp <- fmap Left (C.httpLbs pReq manager) `catch`
+                (\ex -> case ex of
+                    HttpExceptionRequest _ ResponseTimeout ->
+                        return $ Right (pack $ show ex)
+                    _ -> return $ Right (pack $ show ex))
+            let qresp = case resp of
+                            Left r -> QueueResponse { queueResponseBody = responseBody r, queueResponseStatus = statusCode $ responseStatus r }
+                            Right e -> QueueResponse { queueResponseBody = e, queueResponseStatus = 9999 }
             -- Issue the callback
             callback rq qreq qresp
             where callback = requestCallback qreq

@@ -5,7 +5,6 @@ import APIGetter
 import Database.Loader
 import Datas
 import DataHelpers
-import RequestQueues
 import DerpAPI
 
 import Data.Pool
@@ -20,8 +19,8 @@ handleImageResponse sett pool schema out rq req resp = do
             Image i -> do
                 when (load_full_images sett) $ do
                     comments <- getImageComments' (image_id i) (image_comment_count i) sett out (requestRateLimiter rq)
-                    loaded <- withResource pool $ \conn -> loadComments (flatten $ map getCommentsFromPage comments) conn schema
-                    writeOut out $ "Load image " ++ show (image_id i) ++ " comments: " ++ show loaded ++ " comments."
+                    loaded <- withResource pool $ \conn -> loadComments (flatten $ map getCommentsFromPage comments) conn schema out
+                    writeOut out $ "Load image " ++ show (image_id i) ++ ": " ++ show loaded ++ " comments."
                 (d,t) <- withResource pool $ \conn -> loadImage image conn schema out
                 writeOut out $ "Load image " ++ show (image_id i) ++ ": " ++ show d ++ " data, " ++ show t ++ " tags."
             DuplicateImage i -> do
@@ -44,7 +43,7 @@ handleUserResponse sett pool schema out rq req resp = do
                 when (load_full_users sett) $ do
                     faves <- getUserFavorites' (user_name user) sett out (requestRateLimiter rq)
                     loaded <- withResource pool $ \conn -> loadUserFavorites (user_id user) faves conn schema out
-                    writeOut out $ "Load user " ++ show (user_id user) ++ " faves: " ++ show loaded ++ " faves."
+                    writeOut out $ "Load user " ++ show (user_id user) ++ ": " ++ show loaded ++ " faves."
                 (d,a,l) <- withResource pool $ \conn -> loadUser user conn schema out
                 writeOut out $ "Load user " ++ show (user_id user) ++ ": " ++ show d ++ " data, " ++ show a ++ " awards, " ++ show l ++ " links."
             NullUser -> writeOut out $ "Null user at " ++ requestUri req
