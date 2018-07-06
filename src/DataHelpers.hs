@@ -1,12 +1,13 @@
-module DataManipulation where
+module DataHelpers where
 
 import Datas
-import qualified Data.ByteString.Lazy as BL
+import Data.ByteString.Lazy (ByteString)
 import Data.Aeson
 
 getImageId :: Image -> ImageId
 getImageId (Image i)          = image_id i
-getImageId (ImageDuplicate i) = duplicate_image_id i
+getImageId (DuplicateImage i) = duplicate_image_id i
+getImageId (DeletedImage i)   = deleted_image_id i
 getImageId _                  = 0
 
 getSearchImages :: SearchPage -> [Image]
@@ -17,10 +18,14 @@ getTagPageTags :: TagPage -> [Tag]
 getTagPageTags (TagPage t) = t
 getTagPageTags _           = []
 
+getCommentsFromPage :: CommentPage -> [Comment]
+getCommentsFromPage (NullCommentPage) = []
+getCommentsFromPage (CommentPage c)   = c
+
 filterNulls :: (Nullable a) => [a] -> [a]
 filterNulls = filter $ not . isnull
 
-decodeNoMaybe :: (Nullable a, FromJSON a) => BL.ByteString -> a
+decodeNoMaybe :: (Nullable a, FromJSON a) => ByteString -> a
 decodeNoMaybe s =
     case decoded of
         Just a  -> a

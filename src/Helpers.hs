@@ -1,6 +1,8 @@
 module Helpers where
 
 import Data.Time
+import Control.Concurrent.STM
+import Control.Concurrent.STM.TQueue
 
 parseJSONTime :: String -> UTCTime
 parseJSONTime s = 
@@ -11,3 +13,11 @@ parseJSONTime s =
 
 flatten :: [[a]] -> [a]
 flatten xs = foldl (\x y -> x ++ y) [] xs
+
+zipLists :: [a] -> [a] -> [a]
+zipLists (xs)   ([])   = xs
+zipLists ([])   (ys)   = ys
+zipLists (x:xs) (y:ys) = x:y:(zipLists xs ys)
+
+writeOut :: (Show a) => TQueue a -> a -> IO ()
+writeOut q e = atomically $ writeTQueue q e

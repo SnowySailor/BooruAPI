@@ -3,7 +3,8 @@ module Datas where
 
 import Control.Applicative
 import Control.Concurrent
-import qualified Data.Map as M
+import Control.Concurrent.STM
+import Data.Map
 import Database.PostgreSQL.Simple.ToField
 import Database.PostgreSQL.Simple.ToRow
 import Database.PostgreSQL.Simple
@@ -11,28 +12,29 @@ import Data.Pool
 import Data.Aeson
 import Data.Time.Clock
 import Data.Attoparsec.ByteString
-import Data.Text
+import Data.ByteString.Lazy (ByteString)
+import Data.HashSet
 import GHC.Word
 
 -- Types
 
-type PageNo    = Int
-type ImageId   = Int
-type CommentId = Int
-type TagId     = Int
-type AwardId   = Int
-type UserId    = Int
-type Username  = String
+type PageNo      = Int
+type ImageId     = Int
+type CommentId   = Int
+type TagId       = Int
+type AwardId     = Int
+type UserId      = Int
+type Username    = String
+type RateLimiter = TBQueue ()
+type OutQueue    = TQueue String
 
 -- Datas
 
 data CommentPage = CommentPage [Comment] | NullCommentPage deriving (Show)
 data SearchPage  = SearchPage Int [Image] | NullSearchPage deriving (Show)
 data TagPage     = TagPage [Tag] | NullTagPage deriving (Show)
-data Image       = Image ImageData | ImageDuplicate DuplicateData | ImageDeleted DeletedData | NullImage deriving (Show)
-data ImageFull   = ImageFull ImageData [Comment] | ImageDuplicateFull DuplicateData | ImageDeletedFull DeletedData | NullImageFull deriving (Show)
-data User        = User UserData | AnonymousUser | NullUser deriving (Show)
-data UserFull    = UserFull UserData [ImageId] | AnonymousUserFull | NullUserFull deriving (Show)
+data Image       = Image ImageData | DuplicateImage DuplicateImageData | DeletedImage DeletedImageData | NullImage deriving (Show)
+data HTTPMethod  = GET | POST deriving (Show)
 
 data ImageData = ImageData {
     image_id            :: ImageId   ,
@@ -50,32 +52,32 @@ data ImageData = ImageData {
     image_height        :: Int       ,
     image_width         :: Int       ,
     image_aspect_ratio  :: Double
-} | NullImageData deriving (Show)
+} | NullImageData deriving (Show, Eq)
 
-data DuplicateData = DuplicateData {
+data DuplicateImageData = DuplicateImageData {
     duplicate_image_id      :: Int      ,
     duplicate_of_id         :: Int      ,
     duplicate_uploader_id   :: Maybe Int,
     duplicate_created_at    :: UTCTime  ,
     duplicate_updated_at    :: UTCTime  ,
     duplicate_first_seen_at :: UTCTime
-} | NullDuplicateData deriving (Show)
+} | NullDuplicateImageData deriving (Show, Eq)
 
-data DeletedData = DeletedData {
+data DeletedImageData = DeletedImageData {
     deleted_image_id      :: Int      ,
     deleted_uploader_id   :: Maybe Int,
     deleted_reason        :: String   ,
     deleted_created_at    :: UTCTime  ,
     deleted_updated_at    :: UTCTime  ,
     deleted_first_seen_at :: UTCTime
-} | NullDeletedData deriving (Show)
+} | NullDeletedImageData deriving (Show, Eq)
 
 data Tag = Tag {
     tag_id                :: TagId       ,
     tag_name              :: String      ,
     tag_slug              :: String      ,
     tag_description       :: String      ,
-    tag_short_desctiption :: String      ,
+    tag_short_description :: String      ,
     tag_aliased_to        :: Maybe TagId ,
     tag_implied_tags      :: [TagId]     ,
     tag_category          :: Maybe String,
@@ -91,7 +93,7 @@ data Comment = Comment {
     comment_deleted   :: Bool
 } | NullComment deriving (Show)
 
-data UserData = UserData {
+data User = User {
     user_id            :: UserId      ,
     user_name          :: String      ,
     user_description   :: Maybe String,
@@ -103,7 +105,7 @@ data UserData = UserData {
     user_topic_count   :: Int         ,
     user_awards        :: [Award]     ,
     user_links         :: [Link]
-} | NullUserData deriving (Show)
+} | AnonymousUser | NullUser deriving (Show)
 
 data Award = Award {
     award_id    :: AwardId,
@@ -119,6 +121,28 @@ data Link = Link {
     link_state      :: String
 } | NullLink deriving (Show)
 
+data RequestQueues = RequestQueues {
+    requestQueuesMain  :: TBQueue QueueRequest,
+    requestQueuesRetry :: TQueue QueueRequest,
+    requestRateLimiter :: Maybe RateLimiter,
+    requestInProgress  :: TMVar Int
+}
+
+data QueueResponse = QueueResponse {
+    queueResponseBody   :: ByteString,
+    queueResponseStatus :: Int
+}
+
+data QueueRequest = QueueRequest {
+    requestUri      :: String,
+    requestBody     :: Maybe ByteString,
+    requestMethod   :: HTTPMethod,
+    requestTries    :: Int,
+    requestCodes    :: [Int],
+    requestTriesMax :: Int,
+    requestCallback :: RequestQueues -> QueueRequest -> QueueResponse -> IO ()
+}
+
 data DatabaseCredentials = DatabaseCredentials {
     db_host     :: String,
     db_port     :: Word16,
@@ -129,16 +153,25 @@ data DatabaseCredentials = DatabaseCredentials {
 } deriving (Show)
 
 data ServerResources = ServerResources {
-    serverPools    :: MVar (M.Map String (Pool Connection)),
+    serverPools    :: MVar (Map String (Pool Connection)),
     serverPoolLock :: MVar () -- write lock
 }
 
 data Settings = Settings {
-    api_key           :: String,
-    images_per_page   :: Int,
-    comments_per_page :: Int,
-    load_start_image  :: Int,
-    load_end_image    :: Int
+    api_key             :: String,
+    images_per_page     :: Int,
+    comments_per_page   :: Int,
+    load_image_start    :: Int,
+    load_image_end      :: Int,
+    load_user_start     :: Int,
+    load_user_end       :: Int,
+    load_tags_start     :: Int,
+    load_tags_end       :: Int,
+    load_full_images    :: Bool,
+    load_full_users     :: Bool,
+    num_request_threads :: Int,
+    requests_per_second :: Double,
+    max_retry_count     :: Int
 } deriving (Show)
 
 -- Classes
@@ -161,41 +194,34 @@ instance FromJSON Image where
         let obj = (Object o)
         eImage <- eitherP (parseJSON obj) $ eitherP (parseJSON obj) (parseJSON obj)
         return $ case eImage of
-            Left imageRegular           -> Image imageRegular 
-            Right eImage2 -> 
+            Left imageRegular           -> if imageRegular == NullImageData then NullImage else Image imageRegular
+            Right eImage2 ->
                 case eImage2 of
-                    Left imageDuplicate -> ImageDuplicate imageDuplicate
-                    Right imageDeleted  -> ImageDeleted imageDeleted
+                    Left imageDuplicate -> if imageDuplicate == NullDuplicateImageData then NullImage else DuplicateImage imageDuplicate
+                    Right imageDeleted  -> if imageDeleted == NullDeletedImageData then NullImage else DeletedImage imageDeleted
     parseJSON _          = pure NullImage
 
-instance FromJSON User where
-    parseJSON o = do
-        userD <- parseJSON o
-        return $ User userD
-
-instance FromJSON DeletedData where
+instance FromJSON DeletedImageData where
     parseJSON (Object o) =
-        DeletedData
+        DeletedImageData
             <$> o .:  "id"
             <*> o .:? "uploader_id"
             <*> o .:  "deletion_reason"
             <*> o .:  "created_at"
             <*> o .:  "updated_at"
             <*> o .:  "first_seen_at"
-        <|> pure NullDeletedData
-    parseJSON _          = pure NullDeletedData
+    parseJSON _          = pure NullDeletedImageData
 
-instance FromJSON DuplicateData where
+instance FromJSON DuplicateImageData where
     parseJSON (Object o) =
-        DuplicateData
+        DuplicateImageData
             <$> o .:  "id"
             <*> o .:  "duplicate_of"
             <*> o .:? "uploader_id"
             <*> o .:  "created_at"
             <*> o .:  "updated_at"
             <*> o .:  "first_seen_at"
-        <|> pure NullDuplicateData
-    parseJSON _          = pure NullDuplicateData
+    parseJSON _          = pure NullDuplicateImageData
 
 instance FromJSON ImageData where
     parseJSON (Object o) =
@@ -215,7 +241,6 @@ instance FromJSON ImageData where
             <*> o .:  "height"
             <*> o .:  "width"
             <*> o .:  "aspect_ratio"
-        <|> pure NullImageData
     parseJSON _          = pure NullImageData
 
 instance FromJSON SearchPage where
@@ -233,12 +258,12 @@ instance FromJSON CommentPage where
     parseJSON _          = pure NullCommentPage
 
 instance FromJSON TagPage where
-    parseJSON (Object o) = do
-        tags <- parseJSON (Object o)
+    parseJSON o = do
+        tags <- parseJSON o
         return $ case tags of
             Just t  -> TagPage t
             Nothing -> NullTagPage
-    parseJSON _          = pure NullTagPage
+    --parseJSON _          = pure NullTagPage
 
 instance FromJSON Comment where
     parseJSON (Object o) =
@@ -252,9 +277,9 @@ instance FromJSON Comment where
         <|> pure NullComment
     parseJSON _          = pure NullComment
 
-instance FromJSON UserData where
+instance FromJSON User where
     parseJSON (Object o) =
-        UserData
+        User
             <$> o .:  "id"
             <*> o .:  "name"
             <*> o .:? "description"
@@ -266,8 +291,8 @@ instance FromJSON UserData where
             <*> o .:  "topic_count"
             <*> o .:  "awards"
             <*> o .:  "links"
-        <|> pure NullUserData
-    parseJSON _          = pure NullUserData
+        <|> pure NullUser
+    parseJSON _          = pure NullUser
 
 instance FromJSON Award where
     parseJSON (Object o) =
@@ -308,10 +333,19 @@ instance FromJSON Settings where
     parseJSON (Object v) = 
         Settings
             <$> v .:  "key"
-            <*> v .:? "images_per_page"   .!= 50
-            <*> v .:? "comments_per_page" .!= 20
-            <*> v .:? "start_image_id"    .!= 1
-            <*> v .:? "end_image_id"      .!= 1
+            <*> v .:? "images_per_page"     .!= 50
+            <*> v .:? "comments_per_page"   .!= 20
+            <*> v .:? "start_image_id"      .!= 0
+            <*> v .:? "end_image_id"        .!= (-1)
+            <*> v .:? "start_user_id"       .!= 0
+            <*> v .:? "end_user_id"         .!= (-1)
+            <*> v .:? "start_tag_page"      .!= 0
+            <*> v .:? "end_tag_page"        .!= (-1)
+            <*> v .:? "load_full_images"    .!= False
+            <*> v .:? "load_full_users"     .!= False
+            <*> v .:? "num_request_threads" .!= 1
+            <*> v .:? "max_requests_per_second" .!= 4.0
+            <*> v .:? "max_retry_count"     .!= 2
     parseJSON _          = fail "Unable to parse non-Object"
 
 instance FromJSON DatabaseCredentials where
@@ -329,22 +363,6 @@ instance Nullable Image where
     null = NullImage
     isnull (NullImage) = True
     isnull _           = False
-instance Nullable ImageFull where
-    null = NullImageFull
-    isnull (NullImageFull) = True
-    isnull _               = False
-instance Nullable ImageData where
-    null = NullImageData
-    isnull (NullImageData) = True
-    isnull _               = False
-instance Nullable DuplicateData where
-    null = NullDuplicateData
-    isnull (NullDuplicateData) = True
-    isnull _                   = False
-instance  Nullable DeletedData where
-    null = NullDeletedData
-    isnull (NullDeletedData) = True
-    isnull _                 = False
 instance Nullable Comment where
     null = NullComment
     isnull (NullComment) = True
@@ -357,10 +375,6 @@ instance Nullable SearchPage where
     null = NullSearchPage
     isnull (NullSearchPage) = True
     isnull _                = False
-instance Nullable UserData where
-    null = NullUserData
-    isnull (NullUserData) = True
-    isnull _              = False
 instance Nullable Award where
     null = NullAward
     isnull (NullAward) = True

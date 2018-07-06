@@ -3,8 +3,11 @@ module Database.Loader where
 import Sql
 import Datas
 import GHC.Int
-import Database.Logger
 import Database.PostgreSQL.Simple as P
+import Processing
+import Helpers
+import DataHelpers
+import Control.Monad
 
 -- Images
     -- ImageData
@@ -16,87 +19,82 @@ import Database.PostgreSQL.Simple as P
         -- Comments
     -- Image tags
 
-loadImageData :: ImageData -> Connection -> String -> IO (Int64, Int64)
-loadImageData image conn s =
+loadImage :: Image -> Connection -> String -> OutQueue -> IO (Int64, Int64)
+loadImage image conn s out =
+    case image of
+        Image d -> loadImageData d conn s out
+        DuplicateImage d -> do
+            dataLoaded <- loadDuplicateData d conn s out
+            return (dataLoaded, 0)
+        DeletedImage d -> do
+            dataLoaded <- loadDeletedData d conn s out
+            return (dataLoaded, 0)
+        NullImage -> do
+            writeOut out "loadImage called on NullImage"
+            return (0, 0)
+
+loadImageData :: ImageData -> Connection -> String -> OutQueue -> IO (Int64, Int64)
+loadImageData image conn s out =
     case image of
         ImageData{} ->
             withTransaction conn $ do
-                tagsLoaded <- loadTags (image_tags image) (image_id image) conn s
+                tagsLoaded <- loadImageTags (image_tags image) (image_id image) conn s out
                 dataLoaded <- execute conn (insertImage s) (image_id image, image_uploader_id image, image_description image, image_upvotes image,
                                                             image_downvotes image, image_faves image, image_score image, image_comment_count image,
                                                             image_created_at image, image_updated_at image, image_first_seen_at image,
                                                             image_width image, image_height image, image_aspect_ratio image)
                 return (tagsLoaded, dataLoaded)
         NullImageData -> do
-            logError "loadImageData called on NullImageData"
+            writeOut out "loadImageData called on NullImageData"
             return (0, 0)
 
-loadDuplicateData :: DuplicateData -> Connection -> String -> IO Int64
-loadDuplicateData image conn s =
+loadDuplicateData :: DuplicateImageData -> Connection -> String -> OutQueue -> IO Int64
+loadDuplicateData image conn s out =
     case image of
-        DuplicateData{} ->
+        DuplicateImageData{} ->
             execute conn (insertImageDuplicate s) (duplicate_image_id image, duplicate_of_id image, duplicate_uploader_id image,
                                                    duplicate_created_at image, duplicate_updated_at image, duplicate_first_seen_at image)
-        NullDuplicateData -> do
-            logError "loadDuplicateData called on NullDuplicateData"
+        NullDuplicateImageData -> do
+            writeOut out "loadDuplicateData called on NullDuplicateImageData"
             return 0
 
-loadDeletedData :: DeletedData -> Connection -> String -> IO Int64
-loadDeletedData image conn s =
+loadDeletedData :: DeletedImageData -> Connection -> String -> OutQueue -> IO Int64
+loadDeletedData image conn s out =
     case image of
-        DeletedData{} ->
+        DeletedImageData{} ->
             execute conn (insertImageDeleted s) (deleted_image_id image, deleted_uploader_id image, deleted_reason image, deleted_created_at image,
                                                  deleted_updated_at image, deleted_first_seen_at image)
-        NullDeletedData -> do
-            logError "loadDeletedData called on NullDeletedData"
+        NullDeletedImageData -> do
+            writeOut out "loadDeletedData called on NullDeletedImageData"
             return 0
 
-loadImageTags :: Image -> Connection -> String -> IO Int64
-loadImageTags image conn s =
-    case image of
-        Image d -> loadTags (image_tags d) (image_id d) conn s
-        ImageDuplicate _ -> do
-            logError "loadImageTags called on ImageDuplicate"
-            return 0
-        ImageDeleted _ -> do
-            logError "loadImageTags called on ImageDeleted"
-            return 0
-        NullImage -> do
-            logError "loadImageTags called on ImageNull"
-            return 0
+loadImageTags :: [TagId] -> ImageId -> Connection -> String -> OutQueue -> IO Int64
+loadImageTags tags image conn s out = executeMany conn (insertImageTag s) $ map (\x -> (image, x)) tags
 
-loadImage :: Image -> Connection -> String -> IO (Int64, Int64)
-loadImage image conn s =
-    case image of
-        Image d -> loadImageData d conn s
-        ImageDuplicate d -> do
-            dataLoaded <- loadDuplicateData d conn s
-            return (dataLoaded, 0)
-        ImageDeleted d -> do
-            dataLoaded <- loadDeletedData d conn s
-            return (dataLoaded, 0)
-        NullImage -> do
-            logError "loadImage called on NullImage"
-            return (0, 0)
 
--- Returns a tuple with the number of image datas loaded and the number of comments loaded respectively
-loadImageFull :: ImageFull -> Connection -> String -> IO (Int64, Int64, Int64)
-loadImageFull image conn s =
-    case image of
-        ImageFull d c -> do
-            withTransaction conn $ do
-                (dataLoaded, tagsLoaded) <- loadImageData d conn s
-                commentsLoaded           <- loadComments c conn s
-                return (dataLoaded, tagsLoaded, commentsLoaded)
-        ImageDuplicateFull d -> do
-            dataLoaded <- loadDuplicateData d conn s
-            return (dataLoaded, 0, 0)
-        ImageDeletedFull d -> do
-            dataLoaded <- loadDeletedData d conn s
-            return (dataLoaded, 0, 0)
-        NullImageFull -> do
-            logError "loadImageFull called on NullImageFull"
-            return (0, 0, 0)
+-- Tags
+    -- Tag definitions
+    -- Implied tags
+
+loadTags :: [Tag] -> Connection -> String -> OutQueue -> IO [(Int64, Int64)]
+loadTags tags conn s out =
+    withTransaction conn $ do
+        forM tags $ \tag ->
+            case tag of
+                Tag{} -> do
+                    dataLoaded <- execute conn (insertTag s) (tag_id tag, tag_name tag, tag_slug tag, tag_description tag,
+                                                              tag_short_description tag, tag_aliased_to tag, tag_category tag,
+                                                              tag_spoiler_image tag)
+                    implicationsLoaded <- loadTagImplications (tag_id tag) (tag_implied_tags tag) conn s out
+                    return (dataLoaded, implicationsLoaded)
+                NullTag -> do
+                    writeOut out "loadTags called on NullTag"
+                    return (0, 0)
+
+loadTagImplications :: TagId -> [TagId] -> Connection -> String -> OutQueue -> IO Int64
+loadTagImplications tag impliedTags conn s out =
+    executeMany conn (insertTagImplication s) tagImplications
+    where tagImplications = map (\x -> (tag, x)) impliedTags
 
 -- Comments
     -- Comments
@@ -105,7 +103,7 @@ loadComments :: [Comment] -> Connection -> String -> IO Int64
 loadComments c conn s =
     executeMany conn (insertComment s) comments
     where comments = map (\x -> (comment_id x, comment_image_id x, comment_author x,
-                                 comment_body x, comment_posted_at x, comment_deleted x)) c
+                                 comment_body x, comment_posted_at x, comment_deleted x)) $ filterNulls c
 
 -- Users
     -- Profiles
@@ -113,93 +111,51 @@ loadComments c conn s =
     -- Links
     -- Favorites
 
-loadUserFavorites :: UserFull -> Connection -> String -> IO Int64
-loadUserFavorites user conn s =
+loadUser :: User -> Connection -> String -> OutQueue -> IO (Int64, Int64, Int64)
+loadUser user conn s out =
     case user of
-        UserFull u f ->
-            executeMany conn (insertUserFavorite s) faves
-            where faves = map (\x -> ((user_id u), x)) f
-        AnonymousUserFull -> do
-            logError "loadUserFavorites called on AnonymousUserFull"
-            return 0
-        NullUserFull -> do
-            logError "loadUserFavorites called on NullUserFull"
-            return 0
-
-loadUserAwards :: User -> Connection -> String -> IO Int64
-loadUserAwards user conn s =
-    case user of
-        User NullUserData -> do
-            logError "loadUserAwards called on NullUserData"
-            return 0
-        User d ->
-            executeMany conn (insertUserAward s) awards
-            where awards = map (\x -> (award_id x, user_id d, award_title x, award_label x, award_date x)) $ user_awards d
-        AnonymousUser -> do
-            logError "loadUserAwards called on AnonymousUserFull"
-            return 0
-        NullUser -> do
-            logError "loadUserAwards called on NullUserFull"
-            return 0
-
-loadUserLinks :: User -> Connection -> String -> IO Int64
-loadUserLinks user conn s =
-    case user of
-        User NullUserData -> do
-            logError "loadUserLinks called on NullUserData"
-            return 0
-        User d ->
-            executeMany conn (insertUserLink s) links
-            where links = map (\x -> (link_user_id x, link_tag_id x, link_created_at x, link_state x)) $ user_links d
-        AnonymousUser -> do
-            logError "loadUserLinks called on AnonymousUser"
-            return 0
-        NullUser -> do
-            logError "loadUserLinks called on NullUser"
-            return 0
-
-loadUser :: User -> Connection -> String -> IO (Int64, Int64, Int64)
-loadUser user conn s =
-    case user of
-        User NullUserData -> do
-            logError "loadUser called on NullUserData"
-            return (0, 0, 0)
-        User d ->
+        User{} ->
             withTransaction conn $ do
-                dataLoaded <-
-                    execute conn (insertUser s) (user_id d, user_name d, user_description d, user_role d, user_created_at d,
-                                                 user_comment_count d, user_upload_count d, user_post_count d, user_topic_count d)
-                awardsLoaded <- loadUserAwards user conn s
-                linksLoaded <- loadUserLinks user conn s
+                dataLoaded   <- execute conn (insertUser s) (user_id user, user_name user, user_description user, user_role user,
+                                                             user_created_at user, user_comment_count user, user_upload_count user,
+                                                             user_post_count user, user_topic_count user)
+                awardsLoaded <- loadUserAwards user conn s out
+                linksLoaded  <- loadUserLinks user conn s out
                 return (dataLoaded, awardsLoaded, linksLoaded)
         AnonymousUser -> do
-            logError "loadUser called on AnonymousUser"
+            writeOut out "loadUser called on AnonymousUser"
             return (0,0,0)
         NullUser -> do
-            logError "loadUser called on NullUser"
+            writeOut out "loadUser called on NullUser"
             return (0,0,0)
 
-loadUserFull :: UserFull -> Connection -> String -> IO (Int64, Int64, Int64, Int64)
-loadUserFull user conn s =
+loadUserFavorites :: UserId -> [ImageId] -> Connection -> String -> OutQueue -> IO Int64
+loadUserFavorites user f conn s out =
+    executeMany conn (insertUserFavorite s) faves
+    where faves = map (\x -> (user, x)) f
+
+loadUserAwards :: User -> Connection -> String -> OutQueue -> IO Int64
+loadUserAwards user conn s out =
     case user of
-        UserFull d _ ->
-            withTransaction conn $ do
-                (dataLoaded, awardsLoaded, linksLoaded) <- loadUser (User d) conn s
-                favesLoaded <- loadUserFavorites user conn s
-                return (dataLoaded, awardsLoaded, linksLoaded, favesLoaded)
-        AnonymousUserFull -> do
-            logError "loadUserFull called on AnonymousUserFull"
-            return (0, 0, 0, 0)
-        NullUserFull -> do
-            logError "loadUserFull called on NullUserFull"
-            return (0, 0, 0, 0)
+        User{} ->
+            executeMany conn (insertUserAward s) awards
+            where awards = map (\x -> (award_id x, user_id user, award_title x, award_label x, award_date x)) $ user_awards user
+        AnonymousUser -> do
+            writeOut out "loadUserAwards called on AnonymousUser"
+            return 0
+        NullUser -> do
+            writeOut out "loadUserAwards called on NullUser"
+            return 0
 
--- Tags
-    -- Image tags
-    -- Tag definitions
-    -- Implied tags
-
-loadTags :: [TagId] -> ImageId -> Connection -> String -> IO Int64
-loadTags tags img_id conn s =
-    executeMany conn (insertImageTag s) tagsToLoad
-    where tagsToLoad = map (\x -> (img_id, x)) tags
+loadUserLinks :: User -> Connection -> String -> OutQueue -> IO Int64
+loadUserLinks user conn s out =
+    case user of
+        User{} ->
+            executeMany conn (insertUserLink s) links
+            where links = map (\x -> (link_user_id x, link_tag_id x, link_created_at x, link_state x)) $ user_links user
+        AnonymousUser -> do
+            writeOut out "loadUserLinks called on AnonymousUser"
+            return 0
+        NullUser -> do
+            writeOut out "loadUserLinks called on NullUser"
+            return 0
