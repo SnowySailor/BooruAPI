@@ -42,7 +42,7 @@ insertUserAward :: String -> Query
 insertUserAward schema = Query $ append "insert into " $ append (pack schema) ".user_award (id, user_id, title, label, date) values (?, ?, ?, ?, ?) on conflict do nothing"
 
 insertUserLink :: String -> Query
-insertUserLink schema = Query $ append "insert into " $ append (pack schema) ".user_link (user_id, tag_id, date, state) values (?, ?) on conflict do nothing"
+insertUserLink schema = Query $ append "insert into " $ append (pack schema) ".user_link (user_id, tag_id, date, state) values (?, ?, ?, ?) on conflict do nothing"
 
 insertUserFavorite :: String -> Query
 insertUserFavorite schema = Query $ append "insert into " $ append (pack schema) ".user_favorite (user_id, image_id) values (?, ?) on conflict do nothing"
