@@ -1,5 +1,6 @@
 - user: youruser
   password: yourpassword
   host: yourhost
+  port: yourport
   database: yourdatabase
   schema: yourschema
