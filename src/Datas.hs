@@ -379,6 +379,10 @@ instance Nullable Award where
     null = NullAward
     isnull (NullAward) = True
     isnull _           = False
+instance Nullable Link where
+    null = NullLink
+    isnull (NullLink) = True
+    isnull _          = False
 instance Nullable Tag where
     null = NullTag
     isnull (NullTag) = True

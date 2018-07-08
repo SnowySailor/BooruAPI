@@ -139,7 +139,7 @@ loadUserAwards user conn s out =
     case user of
         User{} ->
             executeMany' conn (insertUserAward s) awards out
-            where awards = map (\x -> (award_id x, user_id user, award_title x, award_label x, award_date x)) $ user_awards user
+            where awards = map (\x -> (award_id x, user_id user, award_title x, award_label x, award_date x)) $ filterNulls $ user_awards user
         AnonymousUser -> do
             writeOut out "loadUserAwards called on AnonymousUser"
             return 0
@@ -152,7 +152,7 @@ loadUserLinks user conn s out =
     case user of
         User{} ->
             executeMany' conn (insertUserLink s) links out
-            where links = map (\x -> (link_user_id x, link_tag_id x, link_created_at x, link_state x)) $ user_links user
+            where links = map (\x -> (link_user_id x, link_tag_id x, link_created_at x, link_state x)) $ filterNulls $ user_links user
         AnonymousUser -> do
             writeOut out "loadUserLinks called on AnonymousUser"
             return 0
