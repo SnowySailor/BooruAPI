@@ -145,14 +145,14 @@ handleBadResponse out rq req resp = do
         case status of
             429 -> do
                 writeOut out $ "Got 429 at " ++ requestUri req ++ ". Consider lowering max_requests_per_second."
-                retryRequest req resp rq
+                retryRequest req resp rq out
             404 -> do
                 writeOut out $ "Got 404 at " ++ requestUri req ++ "."
             9999 -> do
                 writeOut out $ "Got unexpected exception. Retrying. Exception: " ++ (show $ queueResponseBody resp)
-                retryRequest req resp rq
+                retryRequest req resp rq out
             _   -> do
                 writeOut out $ "Got " ++ show status ++ " at " ++ requestUri req ++ ". Retrying."
-                retryRequest req resp rq
+                retryRequest req resp rq out
     where max_retries = requestTriesMax req
           status = queueResponseStatus resp

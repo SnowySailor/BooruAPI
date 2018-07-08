@@ -12,6 +12,7 @@ import Network.HTTP.Client as C
 import Network.HTTP.Conduit
 import Network.HTTP.Types.Status
 import Processing
+import Helpers
 
 -- Rate limiting
 dripSem :: (RealFrac a) => RateLimiter -> a -> IO ()
@@ -106,11 +107,14 @@ doRequests' threadCount requests results rl = do
     mapM_ killThread threads
     atomically $ readTVar results
 
-retryRequest :: QueueRequest -> QueueResponse -> RequestQueues -> IO ()
-retryRequest req resp rq = unless (requestTries req > requestTriesMax req) $
-    atomically $
-        writeTQueue (requestQueuesRetry rq) nr
-        where nr = incReqeust req $ queueResponseStatus resp
+retryRequest :: QueueRequest -> QueueResponse -> RequestQueues -> OutQueue -> IO ()
+retryRequest req resp rq out = 
+    if not (requestTries req > requestTriesMax req) then do
+        atomically $
+            writeTQueue (requestQueuesRetry rq) nr
+    else do
+        writeOut out $ "Aborted request due to too many retries: " ++ (show $ requestUri req)
+    where nr = incReqeust req $ queueResponseStatus resp
 
 incReqeust :: QueueRequest -> Int -> QueueRequest
 incReqeust (QueueRequest u b m t c tm cb) s = QueueRequest u b m (t+1) (s:c) tm cb
