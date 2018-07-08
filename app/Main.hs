@@ -34,12 +34,12 @@ main = do
     let imageList    = map (makeImageRequest settings pool (db_schema creds) out)   [(load_image_start settings)..(load_image_end settings)]
         userList     = map (makeUserRequest settings pool (db_schema creds) out)    [(load_user_start settings)..(load_user_end settings)]
         tagList      = map (makeTagPageRequest settings pool (db_schema creds) out) [(load_tags_start settings)..(load_tags_end settings)]
-        combinedList = zipLists tagList $ zipLists imageList userList -- [image, user, image, user, image, user, image, etc.]
+        combinedList = zipLists tagList $ zipLists imageList userList -- [tag, image, tag, user, tag, image, tag, user, tag, image, etc.]
         threadCount  = num_request_threads settings
 
     -- START TASKS --
 
-    -- Flags for when output queuing is complete
+    -- Flags for when outputting is complete
     oComplete <- atomically $ newTMVar 0
 
     -- Start all necessary loader/output/rate-limiting threads

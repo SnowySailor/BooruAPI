@@ -46,6 +46,7 @@ processRequest rq qreq = do
             let qresp = case resp of
                             Left r -> QueueResponse { queueResponseBody = responseBody r, queueResponseStatus = statusCode $ responseStatus r }
                             Right e -> QueueResponse { queueResponseBody = e, queueResponseStatus = 9999 }
+            closeManager manager
             -- Issue the callback
             callback rq qreq qresp
             where callback = requestCallback qreq
