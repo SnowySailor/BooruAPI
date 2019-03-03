@@ -8,7 +8,7 @@ import Data.ByteString.Lazy (ByteString)
 
 -- Defining request urls
 baseUrl :: String
-baseUrl = "https://derpibooru.org"
+baseUrl = "https://yourboorunamehere.org"
 
 imageAPI :: (Print a) => a -> Settings -> String
 imageAPI i s = baseUrl ++ "/images/" ++ (toString i) ++ ".json?key=" ++ (toString $ api_key s)

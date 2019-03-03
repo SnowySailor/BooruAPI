@@ -1,4 +1,4 @@
-- key: {your derpibooru API key}
+- key: {your API key}
   images_per_page: 50 # Recommended value. Not fully tested with others.
   comments_per_page: 20 # Number of comments per comment page API call. Default 20.
   start_user_id: 1 # User to start at. Default 0.
